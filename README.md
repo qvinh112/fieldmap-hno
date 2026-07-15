@@ -73,4 +73,17 @@ chỉ cho lấy GPS trên HTTPS (hoặc localhost).
 
 - Nhật ký 24h (log import/di chuyển) — thêm node `/log` trong RTDB.
 - Nhận ticket ("tôi xử lý cái này") + trạng thái di chuyển của SE.
-- Tự động kéo export CCTS theo lịch (nối với `sla_monitor` sẵn có) thay vì import tay.
+
+## Tự động đồng bộ ticket (đã nối sla_monitor)
+
+Không cần Import Excel tay nữa: `sla_monitor` (thư mục cạnh bên) mỗi chu kỳ quét CCTS
+sẽ tự đẩy ticket tồn (nhóm hungvu + API creation) lên `/tickets/current` — web nhận real-time.
+
+- Cấu hình: `sla_monitor/.env` đã có `FIREBASE_API_KEY` + `FIREBASE_DB_URL`. Để trống 2 dòng
+  này = tắt đẩy (monitor vẫn chạy Telegram bình thường).
+- Module `sla_monitor/fieldmap_push.py` lo phần biến đổi + đẩy; `monitor.py` gọi nó trong
+  `run_cycle` (đã guard: lỗi Firebase không làm hỏng luồng cảnh báo Telegram).
+- Test thủ công không cần chờ chu kỳ: `python fieldmap_push.py --once` (tự fetch 1 lần)
+  hoặc `--dry` (in JSON, không đẩy).
+- Lần đầu cần: `python monitor.py --login` (đăng nhập CCTS) rồi `.\register_task.ps1`
+  (đăng ký Task Scheduler chạy mỗi 10 phút). Từ đó ticket mới lên bản đồ sau vài phút.
