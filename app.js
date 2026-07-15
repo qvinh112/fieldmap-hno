@@ -98,10 +98,13 @@ let myMarker = null;
 const legend = L.control({ position: "bottomright" });
 legend.onAdd = () => {
   const d = L.DomUtil.create("div", "legend");
-  d.innerHTML = "<b>SLA còn lại</b><br>" +
+  d.innerHTML = '<div class="legend-hd">SLA còn lại <span class="legend-caret">▾</span></div><div class="legend-body">' +
     BUCKETS.slice().reverse().map((b) => '<span class="dot" style="background:' + b[2] + '"></span>' + b[1]).join("<br>") +
     '<br><span class="dot" style="background:#0ea5e9"></span>SE online' +
-    '<br><span class="dot" style="background:#f59e0b"></span>Chậm cập nhật';
+    '<br><span class="dot" style="background:#f59e0b"></span>Chậm cập nhật' +
+    '<br><span class="dot" style="background:#fff;border:2px solid #f59e0b"></span>Trạm có ghi chú</div>';
+  L.DomEvent.disableClickPropagation(d);
+  d.querySelector(".legend-hd").onclick = () => d.classList.toggle("expanded"); // mobile: mở/gọn (desktop CSS luôn mở)
   return d;
 };
 legend.addTo(map);
@@ -299,7 +302,12 @@ function afterData() {
 // ---------- lọc + vẽ ----------
 ["f_radius", "f_type", "f_sla", "f_owner", "f_collab"].forEach((id) => $(id).addEventListener("change", render));
 $("q").addEventListener("input", () => { clearTimeout(render._h); render._h = setTimeout(render, 250); });
-$("sidetoggle").addEventListener("click", () => $("side").classList.toggle("open"));
+// mở/đóng panel bộ lọc (mobile) kèm nền mờ
+function openSide() { $("side").classList.add("open"); $("side-backdrop").classList.add("show"); }
+function closeSide() { $("side").classList.remove("open"); $("side-backdrop").classList.remove("show"); }
+$("sidetoggle").addEventListener("click", () => $("side").classList.contains("open") ? closeSide() : openSide());
+$("side-backdrop").addEventListener("click", closeSide);
+$("side-close").addEventListener("click", closeSide);
 // "Chỉ ticket của tôi": chọn tên mình trong lọc collaborator (nếu có trong danh sách)
 $("btn_mine").addEventListener("click", () => {
   const sel = $("f_collab");
@@ -379,7 +387,7 @@ function render() {
   $("urgent_list").querySelectorAll(".row").forEach((el) => {
     el.onclick = () => {
       const t = ug[+el.dataset.i];
-      if (t.st) { const s = STATIONS[t.st]; map.setView([s[0], s[1]], 15); openStationPopup(t.st); $("side").classList.remove("open"); }
+      if (t.st) { const s = STATIONS[t.st]; map.setView([s[0], s[1]], 15); openStationPopup(t.st); closeSide(); }
       else toast(t.id + " chưa map được trạm (" + (t.stRaw || "không mã trạm") + ")");
     };
   });
