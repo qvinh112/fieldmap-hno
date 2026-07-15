@@ -297,6 +297,7 @@ function afterData() {
     [...collabs].sort().map((c) => "<option>" + esc(c) + "</option>").join("");
   const d = new Date(meta.at);
   $("srcnote").textContent = "● " + (meta.file || "import") + " — " + meta.by + " import lúc " + d.toLocaleTimeString("vi") + " " + d.toLocaleDateString("vi");
+  checkStale();
 }
 
 // ---------- lọc + vẽ ----------
@@ -516,8 +517,22 @@ function renderOnline() {
   });
 }
 
+// ---------- cảnh báo dữ liệu cũ (monitor đẩy 10'/lần; quá 20' không mới = có sự cố) ----------
+const STALE_MS = 20 * 60000;
+function checkStale() {
+  const bar = $("stalebar");
+  if (!db || !meta || !meta.at) { bar.style.display = "none"; return; }
+  const age = Date.now() - meta.at;
+  if (age > STALE_MS) {
+    bar.textContent = "⚠ Dữ liệu cũ " + Math.round(age / 60000) + " phút — chạm để tải lại";
+    bar.style.display = "block";
+  } else bar.style.display = "none";
+}
+// chạm banner = tải lại kèm phá cache (lấy code + dữ liệu mới nhất)
+$("stalebar").addEventListener("click", () => { location.href = location.pathname + "?r=" + Date.now(); });
+
 // đồng hồ SLA: tô lại màu mỗi 30 giây (bỏ qua khi đang mở popup để không cắt ngang SE gõ note)
-setInterval(() => { if (tickets.length && !openStation) render(); renderOnline(); }, 30000);
+setInterval(() => { if (tickets.length && !openStation) render(); renderOnline(); checkStale(); }, 30000);
 
 // ---------- vào app ----------
 try { user = JSON.parse(localStorage.getItem("fm_user") || "null"); } catch (e) {}
