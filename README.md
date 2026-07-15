@@ -33,10 +33,13 @@ Toàn bộ chạy **0 đồng**: frontend tĩnh (host miễn phí) + Firebase Re
 {
   "rules": {
     "presence": { ".read": "auth != null", "$uid": { ".write": "auth != null && auth.uid == $uid" } },
-    "tickets":  { ".read": "auth != null", ".write": "auth != null" }
+    "tickets":  { ".read": "auth != null", ".write": "auth != null" },
+    "notes":    { ".read": "auth != null", ".write": "auth != null" }
   }
 }
 ```
+(Node `notes` là ghi chú tại trạm SE tạo — sửa địa chỉ / báo bất thường. Thiếu dòng này thì
+ghi chú sẽ báo `permission_denied`.)
 4. Cột trái **Security → Authentication → Get started → Sign-in method → Anonymous → Enable**.
 5. Trang Project Overview bấm **+ Add app → biểu tượng `</>` (Web)** → đặt tên → copy khối `firebaseConfig` dán vào `config.js` (chỉ cần `apiKey`, `authDomain`, `databaseURL`, `projectId`).
    Nếu khối config thiếu `databaseURL`: lấy URL ở đầu trang Realtime Database (dạng
@@ -73,6 +76,15 @@ chỉ cho lấy GPS trên HTTPS (hoặc localhost).
 
 - Nhật ký 24h (log import/di chuyển) — thêm node `/log` trong RTDB.
 - Nhận ticket ("tôi xử lý cái này") + trạng thái di chuyển của SE.
+
+## Bộ lọc Collaborator + Ghi chú tại trạm (đã có)
+
+- **Lọc Collaborator**: chọn tên SE trong danh sách để chỉ xem ticket mình phối hợp; nút
+  "Chỉ ticket của tôi" tự chọn theo tên đăng nhập nếu khớp.
+- **Ghi chú tại trạm**: mở popup một trạm → phần "📝 Ghi chú tại trạm" cho SE thêm 2 loại:
+  *Sửa địa chỉ* (địa chỉ sai) và *Bất thường / góp ý tại site*. Ghi chú đồng bộ real-time
+  cho cả đội; trạm có ghi chú viền cam trên bản đồ. Người tạo hoặc Admin xóa được ghi chú.
+- **Cần rule `/notes`** ở Bước 1 (xem trên) — nếu không sẽ báo `permission_denied` khi lưu.
 
 ## Tự động đồng bộ ticket (đã nối sla_monitor)
 

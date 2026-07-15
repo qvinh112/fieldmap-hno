@@ -21,6 +21,8 @@ function toDate(v) {
   return isNaN(d) ? null : d;
 }
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+// tách chuỗi nhiều tên "a; b, c" -> ["a","b","c"]
+function tokens(s) { return String(s || "").split(/[;,]/).map((x) => x.trim()).filter(Boolean); }
 function distKm(a, b, c, d) { // haversine
   const r = Math.PI / 180, x = Math.sin((c - a) * r / 2), y = Math.sin((d - b) * r / 2);
   return 12742 * Math.asin(Math.sqrt(x * x + Math.cos(a * r) * Math.cos(c * r) * y * y));
@@ -82,6 +84,8 @@ let tickets = [];            // ticket mở khu vực HN sau import
 let meta = null;             // {file, at, by}
 let myPos = null;            // [lat, lng]
 let presence = {};           // uid -> {name, role, lat, lng, ts}
+let notes = {};              // safeKey(mã trạm) -> { pushId: {type:'addr'|'site', text, by, ts} }
+let openStation = null;      // mã trạm đang mở popup (để cập nhật khi note đổi)
 let db = null, myUid = null;
 const map = L.map("map", { zoomControl: false, preferCanvas: true }).setView([21.02, 105.84], 11);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
@@ -140,10 +144,11 @@ function enter() {
   if (user.role === "ADMIN") $("btn_import").style.display = "";
   startGeo();
   if (FIREBASE_CONFIG) startFirebase();
-  else { // offline: nạp lại lần import trước trên máy này
+  else { // offline: nạp lại lần import trước + ghi chú trên máy này
     try {
       const c = JSON.parse(localStorage.getItem("fm_tickets") || "null");
       if (c) { tickets = c.rows; meta = c.meta; afterData(); }
+      notes = JSON.parse(localStorage.getItem("fm_notes") || "{}");
     } catch (e) {}
   }
   render();
@@ -166,6 +171,10 @@ function startFirebase() {
       presence = snap.val() || {};
       renderSE(); renderOnline();
     }, () => {});
+    db.ref("notes").on("value", (snap) => {
+      notes = snap.val() || {};
+      render();
+    }, () => {});
   }).catch((e) => toast("Firebase auth lỗi: " + e.message, 6000));
 }
 let lastSent = 0, lastSentPos = null;
@@ -179,6 +188,7 @@ function pushPresence(force) {
 }
 
 // ---------- GPS của tôi ----------
+let lastRenderPos = null;
 function startGeo() {
   if (!navigator.geolocation) return toast("Trình duyệt không hỗ trợ GPS");
   navigator.geolocation.watchPosition((p) => {
@@ -190,7 +200,11 @@ function startGeo() {
     } else myMarker.setLatLng(myPos);
     if (first) map.setView(myPos, 13);
     pushPresence(false);
-    render();
+    // chỉ vẽ lại khi di chuyển >30m — tránh rung GPS làm đóng/mở popup liên tục lúc SE đang gõ note
+    if (first || !lastRenderPos || distKm(myPos[0], myPos[1], lastRenderPos[0], lastRenderPos[1]) > 0.03) {
+      lastRenderPos = myPos.slice();
+      render();
+    }
   }, () => {}, { enableHighAccuracy: true, maximumAge: 15000 });
 }
 
@@ -246,6 +260,7 @@ function ingest(rows, partsIds, fname) {
       err: String(r["Error Code"] || "").slice(0, 60),
       status: status,
       owner: String(r["Ticket Owner"] || "").trim(),
+      collab: String(r["Collaborators"] || "").trim(),
       urg: String(r["Urgency Level"] || ""),
       addr: addr.slice(0, 120),
       createT: +createT,
@@ -272,22 +287,35 @@ function afterData() {
   // nạp danh sách owner cho bộ lọc
   const owners = [...new Set(tickets.map((t) => t.owner).filter(Boolean))].sort();
   $("f_owner").innerHTML = '<option value="">Tất cả owner</option>' + owners.map((o) => '<option>' + esc(o) + "</option>").join("");
+  // collaborator: tách từng tên (ngăn bằng ; hoặc ,) để SE chọn đúng tên mình
+  const collabs = new Set();
+  for (const t of tickets) for (const c of tokens(t.collab)) collabs.add(c);
+  $("f_collab").innerHTML = '<option value="">Tất cả collaborator</option>' +
+    [...collabs].sort().map((c) => "<option>" + esc(c) + "</option>").join("");
   const d = new Date(meta.at);
   $("srcnote").textContent = "● " + (meta.file || "import") + " — " + meta.by + " import lúc " + d.toLocaleTimeString("vi") + " " + d.toLocaleDateString("vi");
 }
 
 // ---------- lọc + vẽ ----------
-["f_radius", "f_type", "f_sla", "f_owner"].forEach((id) => $(id).addEventListener("change", render));
+["f_radius", "f_type", "f_sla", "f_owner", "f_collab"].forEach((id) => $(id).addEventListener("change", render));
 $("q").addEventListener("input", () => { clearTimeout(render._h); render._h = setTimeout(render, 250); });
 $("sidetoggle").addEventListener("click", () => $("side").classList.toggle("open"));
+// "Chỉ ticket của tôi": chọn tên mình trong lọc collaborator (nếu có trong danh sách)
+$("btn_mine").addEventListener("click", () => {
+  const sel = $("f_collab");
+  const me = [...sel.options].find((o) => o.value.toLowerCase() === (user ? user.name.toLowerCase() : ""));
+  if (me) { sel.value = me.value; render(); }
+  else toast("Không thấy '" + (user ? user.name : "") + "' trong collaborator — chọn tay trong danh sách");
+});
 
 function filtered() {
   const q = $("q").value.trim().toLowerCase();
   const rad = +$("f_radius").value || 0;
-  const typ = $("f_type").value, sla = $("f_sla").value, own = $("f_owner").value;
+  const typ = $("f_type").value, sla = $("f_sla").value, own = $("f_owner").value, col = $("f_collab").value;
   return tickets.filter((t) => {
     if (typ && (t.st ? STATIONS[t.st][2] : "") !== typ) return false;
     if (own && t.owner !== own) return false;
+    if (col && !tokens(t.collab).includes(col)) return false;
     if (sla && bucketOf(t) !== sla) return false;
     if (rad && myPos && t.st) {
       const s = STATIONS[t.st];
@@ -307,6 +335,7 @@ function nearestSEs(lat, lng) {
 }
 
 function render() {
+  const keepOpen = openStation; // giữ popup đang mở qua lần vẽ lại (clearLayers sẽ đóng nó)
   const list = filtered();
   tkLayer.clearLayers();
 
@@ -320,12 +349,14 @@ function render() {
   for (const [code, arr] of byStation) {
     arr.sort((a, b) => a.deadline - b.deadline);
     const s = STATIONS[code], worst = arr[0];
+    const hasNote = notesOf(code).length > 0; // viền cam = trạm có ghi chú hiện trường
     const mk = L.circleMarker([s[0], s[1]], {
       radius: arr.some((t) => bucketOf(t) === "over" || bucketOf(t) === "b1") ? 10 : 8,
-      color: "#fff", weight: 2, fillColor: BCOLOR[bucketOf(worst)], fillOpacity: 0.95,
+      color: hasNote ? "#f59e0b" : "#fff", weight: hasNote ? 3 : 2,
+      fillColor: BCOLOR[bucketOf(worst)], fillOpacity: 0.95,
     }).addTo(tkLayer);
     mk.bindPopup(() => popupHtml(code, arr), { maxWidth: 330 });
-    mk._st = code;
+    mk._st = code; mk._arr = arr;
   }
 
   // thống kê
@@ -353,6 +384,7 @@ function render() {
     };
   });
   renderSE();
+  if (keepOpen) openStationPopup(keepOpen); // mở lại popup vừa bị clearLayers đóng
 }
 
 function openStationPopup(code) {
@@ -373,8 +405,77 @@ function popupHtml(code, arr) {
         (t.owner ? "<br><span style='color:#64748b'>Owner: " + esc(t.owner) + "</span>" : "") + "</div>";
     }).join("") +
     (near.length ? "<div style='margin-top:6px;border-top:2px solid #e2e8f0;padding-top:5px'><b>Gần nhất:</b> " +
-      near.map((n) => esc(n.p.name) + " (" + n.d.toFixed(1) + " km)").join(" · ") + "</div>" : "");
+      near.map((n) => esc(n.p.name) + " (" + n.d.toFixed(1) + " km)").join(" · ") + "</div>" : "") +
+    notesHtml(code);
 }
+
+// ---------- ghi chú tại trạm (đồng bộ Firebase) ----------
+const TYPE_LABEL = { addr: "Sửa địa chỉ", site: "Bất thường / góp ý" };
+let noteDraft = { code: null, type: "site", text: "" }; // giữ nội dung đang gõ qua các lần vẽ lại
+// mã trạm có dấu "." — không hợp làm key Firebase, thay bằng "_"
+function noteKey(code) { return String(code).replace(/[.#$/\[\]]/g, "_"); }
+function notesOf(code) {
+  const o = notes[noteKey(code)] || {};
+  return Object.entries(o).map(([nid, n]) => ({ nid, ...n })).sort((a, b) => a.ts - b.ts);
+}
+function notesHtml(code) {
+  const list = notesOf(code);
+  const canDel = (n) => user && (user.role === "ADMIN" || n.by === user.name);
+  const items = list.map((n) => {
+    const t = n.type === "addr" ? "addr" : "site";
+    return '<div class="note ' + t + '">' +
+      (canDel(n) ? '<span class="del" onclick="fmDelNote(\'' + esc(code) + "','" + n.nid + '\')">✕</span>' : "") +
+      '<span class="tag">' + TYPE_LABEL[t] + "</span><br>" + esc(n.text) +
+      '<div class="meta">' + esc(n.by) + " · " + fmtAgo(n.ts) + "</div></div>";
+  }).join("");
+  const d = noteDraft.code === code ? noteDraft : { type: "site", text: "" };
+  const opt = (v, lbl) => '<option value="' + v + '"' + (d.type === v ? " selected" : "") + ">" + lbl + "</option>";
+  return '<div class="notes"><div class="nhead">📝 Ghi chú tại trạm' + (list.length ? " (" + list.length + ")" : "") + "</div>" +
+    (items || "<div style='color:#94a3b8;font-size:11.5px'>Chưa có ghi chú.</div>") +
+    '<div class="noteform">' +
+    '<select id="note_type" onchange="fmDraft(\'' + esc(code) + '\')">' +
+    opt("site", "Bất thường / góp ý tại site") + opt("addr", "Sửa địa chỉ (địa chỉ sai)") + "</select>" +
+    '<textarea id="note_text" oninput="fmDraft(\'' + esc(code) + '\')" placeholder="vd: địa chỉ đúng là… / trạm bị ngập, khó vào ban đêm…">' + esc(d.text) + "</textarea>" +
+    '<button onclick="fmAddNote(\'' + esc(code) + '\')">Thêm ghi chú</button></div></div>';
+}
+function fmtAgo(ts) {
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1) return "vừa xong";
+  if (m < 60) return m + " phút trước";
+  const h = Math.round(m / 60);
+  if (h < 24) return h + " giờ trước";
+  return new Date(ts).toLocaleDateString("vi");
+}
+function fmDraft(code) { noteDraft = { code: code, type: $("note_type").value, text: $("note_text").value }; }
+function fmAddNote(code) {
+  const text = $("note_text").value.trim();
+  if (!text) return toast("Nhập nội dung ghi chú");
+  if (!user) return;
+  const entry = { type: $("note_type").value === "addr" ? "addr" : "site", text: text.slice(0, 300), by: user.name, ts: Date.now() };
+  const key = noteKey(code);
+  noteDraft = { code: null, type: "site", text: "" }; // xóa nháp sau khi gửi
+  if (db) {
+    db.ref("notes/" + key).push(entry).catch((e) => toast("Lỗi lưu ghi chú: " + e.message, 6000));
+  } else { // offline: chỉ lưu máy này
+    notes[key] = notes[key] || {};
+    notes[key]["local_" + Date.now()] = entry;
+    localStorage.setItem("fm_notes", JSON.stringify(notes));
+    render();
+  }
+  toast("Đã thêm ghi chú");
+}
+function fmDelNote(code, nid) {
+  if (!confirm("Xóa ghi chú này?")) return;
+  const key = noteKey(code);
+  if (db) db.ref("notes/" + key + "/" + nid).remove();
+  else {
+    if (notes[key]) delete notes[key][nid];
+    localStorage.setItem("fm_notes", JSON.stringify(notes));
+    render();
+  }
+}
+map.on("popupopen", (e) => { openStation = (e.popup._source && e.popup._source._st) || null; });
+map.on("popupclose", () => { openStation = null; });
 
 // ---------- vẽ SE online ----------
 function renderSE() {
@@ -407,8 +508,8 @@ function renderOnline() {
   });
 }
 
-// đồng hồ SLA: tô lại màu mỗi 30 giây
-setInterval(() => { if (tickets.length) render(); renderOnline(); }, 30000);
+// đồng hồ SLA: tô lại màu mỗi 30 giây (bỏ qua khi đang mở popup để không cắt ngang SE gõ note)
+setInterval(() => { if (tickets.length && !openStation) render(); renderOnline(); }, 30000);
 
 // ---------- vào app ----------
 try { user = JSON.parse(localStorage.getItem("fm_user") || "null"); } catch (e) {}

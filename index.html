@@ -50,10 +50,27 @@
   .se-ic.stale { background: #f59e0b; }
   .se-ic.admin { background: #7c3aed; }
 
-  .leaflet-popup-content { font-size: 12.5px; margin: 10px 12px; max-height: 45vh; overflow-y: auto; }
+  .leaflet-popup-content { font-size: 12.5px; margin: 10px 12px; max-height: 55vh; overflow-y: auto; width: 300px !important; }
   .leaflet-popup-content .tk { border-top: 1px solid #e2e8f0; padding: 6px 0; }
   .leaflet-popup-content .tk:first-child { border-top: 0; }
   .pill { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 10.5px; color: #fff; font-weight: 600; }
+
+  /* ghi chú tại trạm */
+  .notes { margin-top: 7px; border-top: 2px solid #e2e8f0; padding-top: 6px; }
+  .notes .nhead { font-weight: 700; margin-bottom: 4px; }
+  .note { padding: 5px 7px; border-radius: 7px; margin-bottom: 4px; background: #f8fafc; border-left: 3px solid #94a3b8; position: relative; }
+  .note.addr { background: #fef2f2; border-left-color: #dc2626; }
+  .note.site { background: #fffbeb; border-left-color: #f59e0b; }
+  .note .meta { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+  .note .del { position: absolute; top: 4px; right: 5px; cursor: pointer; color: #cbd5e1; font-weight: 700; }
+  .note .del:hover { color: #dc2626; }
+  .note .tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+  .note.addr .tag { color: #dc2626; }
+  .note.site .tag { color: #d97706; }
+  .noteform { margin-top: 6px; }
+  .noteform select, .noteform textarea { width: 100%; padding: 6px 7px; border: 1px solid #cbd5e1; border-radius: 7px; font-size: 12px; font-family: inherit; margin-bottom: 5px; }
+  .noteform textarea { resize: vertical; min-height: 42px; }
+  .noteform button { width: 100%; padding: 7px; border: 0; border-radius: 7px; background: #2563eb; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; }
 
   /* đăng nhập */
   #login { position: fixed; inset: 0; background: rgba(15,23,42,.55); z-index: 3000; display: flex; align-items: center; justify-content: center; }
@@ -128,6 +145,9 @@
       </select>
       <label>Ticket Owner</label>
       <select id="f_owner"><option value="">Tất cả owner</option></select>
+      <label>Collaborator (SE phối hợp)</label>
+      <select id="f_collab"><option value="">Tất cả collaborator</option></select>
+      <button class="btn" id="btn_mine" style="width:100%;margin-top:8px;font-size:12px">Chỉ ticket của tôi</button>
     </div>
 
     <div class="card" id="urgent">
