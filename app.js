@@ -157,16 +157,16 @@ function startFirebase() {
     myUid = cred.user.uid;
     pushPresence(true);
     db.ref("presence/" + myUid).onDisconnect().remove();
+    // listener phải gắn SAU khi auth xong: gắn trước bị rules từ chối và Firebase hủy luôn, không tự gắn lại
+    db.ref("tickets/current").on("value", (snap) => {
+      const v = snap.val();
+      if (v && v.rows) { tickets = v.rows; meta = v.meta; afterData(); render(); }
+    }, (e) => toast("Không đọc được dữ liệu ticket: " + e.message, 6000));
+    db.ref("presence").on("value", (snap) => {
+      presence = snap.val() || {};
+      renderSE(); renderOnline();
+    }, () => {});
   }).catch((e) => toast("Firebase auth lỗi: " + e.message, 6000));
-
-  db.ref("tickets/current").on("value", (snap) => {
-    const v = snap.val();
-    if (v && v.rows) { tickets = v.rows; meta = v.meta; afterData(); render(); }
-  });
-  db.ref("presence").on("value", (snap) => {
-    presence = snap.val() || {};
-    renderSE(); renderOnline();
-  });
 }
 let lastSent = 0, lastSentPos = null;
 function pushPresence(force) {
