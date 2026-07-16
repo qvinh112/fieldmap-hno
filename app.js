@@ -85,6 +85,7 @@ let meta = null;             // {file, at, by}
 let myPos = null;            // [lat, lng]
 let presence = {};           // uid -> {name, role, lat, lng, ts}
 let notes = {};              // safeKey(mã trạm) -> { pushId: {type:'addr'|'site', text, by, ts} }
+let rejLive = {};            // safeKey(Ticket ID) -> 1, từ /tickets/rejects (push_export quét Events Record)
 let openStation = null;      // mã trạm đang mở popup (để cập nhật khi note đổi)
 let db = null, myUid = null;
 const map = L.map("map", { zoomControl: false, preferCanvas: true }).setView([21.02, 105.84], 11);
@@ -177,6 +178,11 @@ function startFirebase() {
     }, () => {});
     db.ref("notes").on("value", (snap) => {
       notes = snap.val() || {};
+      render();
+    }, () => {});
+    // danh sách ticket bị VOMS reject — push_export.py đẩy mỗi lần chạy export
+    db.ref("tickets/rejects").on("value", (snap) => {
+      rejLive = (snap.val() || {}).ids || {};
       render();
     }, () => {});
   }).catch((e) => toast("Firebase auth lỗi: " + e.message, 6000));
@@ -331,12 +337,15 @@ $("btn_mine").addEventListener("click", () => {
   else toast("Không thấy '" + (user ? user.name : "") + "' trong collaborator — chọn tay trong danh sách");
 });
 
+// reject = cờ từ file import (quét Events Record lúc ingest) HOẶC từ node live /tickets/rejects
+function isRej(t) { return !!(t.rej || rejLive[noteKey(t.id)]); }
+
 function filtered() {
   const q = $("q").value.trim().toLowerCase();
   const rad = +$("f_radius").value || 0;
   const typ = $("f_type").value, sla = $("f_sla").value, own = $("f_owner").value, col = $("f_collab").value;
   return tickets.filter((t) => {
-    if ($("f_rej").checked && !t.rej) return false;
+    if ($("f_rej").checked && !isRej(t)) return false;
     if (typ && (t.st ? STATIONS[t.st][2] : "") !== typ) return false;
     if (own && t.owner !== own) return false;
     if (col && !tokens(t.collab).includes(col)) return false;
@@ -374,7 +383,7 @@ function render() {
     arr.sort((a, b) => a.deadline - b.deadline);
     const s = STATIONS[code], worst = arr[0];
     const hasNote = notesOf(code).length > 0; // viền cam = trạm có ghi chú hiện trường
-    const hasRej = arr.some((t) => t.rej);    // viền đỏ đứt = có ticket bị VOMS reject (ưu tiên hơn viền cam)
+    const hasRej = arr.some(isRej);           // viền đỏ đứt = có ticket bị VOMS reject (ưu tiên hơn viền cam)
     const mk = L.circleMarker([s[0], s[1]], {
       radius: arr.some((t) => bucketOf(t) === "over" || bucketOf(t) === "b1") ? 10 : 8,
       color: hasRej ? "#dc2626" : hasNote ? "#f59e0b" : "#fff", weight: hasRej || hasNote ? 3 : 2,
@@ -399,7 +408,7 @@ function render() {
   const ug = list.slice().sort((a, b) => a.deadline - b.deadline).slice(0, 40);
   $("urgent_list").innerHTML = ug.map((t, i) =>
     '<div class="row" data-i="' + i + '"><span class="dot" style="background:' + BCOLOR[bucketOf(t)] + '"></span>' +
-    "<span>" + esc(t.stRaw || t.id) + (t.rej ? " <span style='color:#dc2626;font-weight:700;font-size:10px'>⛔ REJECT</span>" : "") +
+    "<span>" + esc(t.stRaw || t.id) + (isRej(t) ? " <span style='color:#dc2626;font-weight:700;font-size:10px'>⛔ REJECT</span>" : "") +
     "<br><span style='color:#64748b;font-size:11px'>" + esc(t.err || t.id) + "</span></span>" +
     '<span class="rem" style="color:' + BCOLOR[bucketOf(t)] + '">' + remText(t) + "</span></div>"
   ).join("") || "<div style='color:#94a3b8;padding:6px 2px'>Chưa có ticket</div>";
@@ -427,7 +436,7 @@ function popupHtml(code, arr) {
     arr.map((t) => {
       const b = bucketOf(t);
       return '<div class="tk"><span class="pill" style="background:' + BCOLOR[b] + '">' + remText(t) + "</span> <b>" + esc(t.id) + "</b> (SLA " + t.limitH + "h)" +
-        (t.rej ? ' <span class="pill" style="background:#dc2626">⛔ REJECT</span>' : "") +
+        (isRej(t) ? ' <span class="pill" style="background:#dc2626">⛔ REJECT</span>' : "") +
         "<br>" + esc(t.err || "—") + " · " + esc(t.status) +
         (t.cpid ? "<br><span style='color:#64748b'>Trụ/tủ: " + esc(t.cpid) + "</span>" : "") +
         (t.owner ? "<br><span style='color:#64748b'>Owner: " + esc(t.owner) + "</span>" : "") + "</div>";
