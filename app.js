@@ -102,7 +102,8 @@ legend.onAdd = () => {
     BUCKETS.slice().reverse().map((b) => '<span class="dot" style="background:' + b[2] + '"></span>' + b[1]).join("<br>") +
     '<br><span class="dot" style="background:#0ea5e9"></span>SE online' +
     '<br><span class="dot" style="background:#f59e0b"></span>Chậm cập nhật' +
-    '<br><span class="dot" style="background:#fff;border:2px solid #f59e0b"></span>Trạm có ghi chú</div>';
+    '<br><span class="dot" style="background:#fff;border:2px solid #f59e0b"></span>Trạm có ghi chú' +
+    '<br><span class="dot" style="background:#fff;border:2px dashed #dc2626"></span>Có ticket bị reject</div>';
   L.DomEvent.disableClickPropagation(d);
   d.querySelector(".legend-hd").onclick = () => d.classList.toggle("expanded"); // mobile: mở/gọn (desktop CSS luôn mở)
   return d;
@@ -227,11 +228,23 @@ $("fileinput").addEventListener("change", async (e) => {
       for (const r of XLSX.utils.sheet_to_json(wb.Sheets["Spare Parts Record"], { defval: null }))
         if (r["Ticket ID"]) partsIds.add(String(r["Ticket ID"]).trim());
     }
-    ingest(rows, partsIds, f.name);
+    // Reject = VOMS "add event record" trả ticket về Open (Processor=VOMS, Status=Open, có Record Detail)
+    // — cùng luật với dashboard; dòng Open ghi chú rỗng là sự kiện mở ticket, KHÔNG tính
+    const rejIds = new Set();
+    if (wb.Sheets["Events Record"]) {
+      for (const r of XLSX.utils.sheet_to_json(wb.Sheets["Events Record"], { defval: null })) {
+        const tid = String(r["Ticket ID"] || "").trim();
+        const st = String(r["Ticket Status"] || "").trim().toLowerCase();
+        const proc = String(r["Processor"] || "").trim().toUpperCase();
+        const detail = String(r["Record Detail"] || "").trim();
+        if (tid && (/close rejected/i.test(st) || (proc === "VOMS" && st === "open" && detail && detail !== "----"))) rejIds.add(tid);
+      }
+    }
+    ingest(rows, partsIds, rejIds, f.name);
   } catch (err) { toast("Lỗi đọc file: " + err.message, 6000); }
 });
 
-function ingest(rows, partsIds, fname) {
+function ingest(rows, partsIds, rejIds, fname) {
   const out = []; let nHN = 0;
   for (const r of rows) {
     const id = String(r["Ticket ID"] || "").trim();
@@ -264,6 +277,7 @@ function ingest(rows, partsIds, fname) {
       status: status,
       owner: String(r["Ticket Owner"] || "").trim(),
       collab: String(r["Collaborators"] || "").trim(),
+      rej: rejIds.has(id) || /close rejected/i.test(status) ? 1 : 0, // bị VOMS reject / Close rejected
       urg: String(r["Urgency Level"] || ""),
       addr: addr.slice(0, 120),
       createT: +createT,
@@ -301,7 +315,7 @@ function afterData() {
 }
 
 // ---------- lọc + vẽ ----------
-["f_radius", "f_type", "f_sla", "f_owner", "f_collab"].forEach((id) => $(id).addEventListener("change", render));
+["f_radius", "f_type", "f_sla", "f_owner", "f_collab", "f_rej"].forEach((id) => $(id).addEventListener("change", render));
 $("q").addEventListener("input", () => { clearTimeout(render._h); render._h = setTimeout(render, 250); });
 // mở/đóng panel bộ lọc (mobile) kèm nền mờ
 function openSide() { $("side").classList.add("open"); $("side-backdrop").classList.add("show"); }
@@ -322,6 +336,7 @@ function filtered() {
   const rad = +$("f_radius").value || 0;
   const typ = $("f_type").value, sla = $("f_sla").value, own = $("f_owner").value, col = $("f_collab").value;
   return tickets.filter((t) => {
+    if ($("f_rej").checked && !t.rej) return false;
     if (typ && (t.st ? STATIONS[t.st][2] : "") !== typ) return false;
     if (own && t.owner !== own) return false;
     if (col && !tokens(t.collab).includes(col)) return false;
@@ -359,9 +374,11 @@ function render() {
     arr.sort((a, b) => a.deadline - b.deadline);
     const s = STATIONS[code], worst = arr[0];
     const hasNote = notesOf(code).length > 0; // viền cam = trạm có ghi chú hiện trường
+    const hasRej = arr.some((t) => t.rej);    // viền đỏ đứt = có ticket bị VOMS reject (ưu tiên hơn viền cam)
     const mk = L.circleMarker([s[0], s[1]], {
       radius: arr.some((t) => bucketOf(t) === "over" || bucketOf(t) === "b1") ? 10 : 8,
-      color: hasNote ? "#f59e0b" : "#fff", weight: hasNote ? 3 : 2,
+      color: hasRej ? "#dc2626" : hasNote ? "#f59e0b" : "#fff", weight: hasRej || hasNote ? 3 : 2,
+      dashArray: hasRej ? "4 3" : null,
       fillColor: BCOLOR[bucketOf(worst)], fillOpacity: 0.95,
     }).addTo(tkLayer);
     mk.bindPopup(() => popupHtml(code, arr), { maxWidth: 330 });
@@ -382,7 +399,8 @@ function render() {
   const ug = list.slice().sort((a, b) => a.deadline - b.deadline).slice(0, 40);
   $("urgent_list").innerHTML = ug.map((t, i) =>
     '<div class="row" data-i="' + i + '"><span class="dot" style="background:' + BCOLOR[bucketOf(t)] + '"></span>' +
-    "<span>" + esc(t.stRaw || t.id) + "<br><span style='color:#64748b;font-size:11px'>" + esc(t.err || t.id) + "</span></span>" +
+    "<span>" + esc(t.stRaw || t.id) + (t.rej ? " <span style='color:#dc2626;font-weight:700;font-size:10px'>⛔ REJECT</span>" : "") +
+    "<br><span style='color:#64748b;font-size:11px'>" + esc(t.err || t.id) + "</span></span>" +
     '<span class="rem" style="color:' + BCOLOR[bucketOf(t)] + '">' + remText(t) + "</span></div>"
   ).join("") || "<div style='color:#94a3b8;padding:6px 2px'>Chưa có ticket</div>";
   $("urgent_list").querySelectorAll(".row").forEach((el) => {
@@ -409,6 +427,7 @@ function popupHtml(code, arr) {
     arr.map((t) => {
       const b = bucketOf(t);
       return '<div class="tk"><span class="pill" style="background:' + BCOLOR[b] + '">' + remText(t) + "</span> <b>" + esc(t.id) + "</b> (SLA " + t.limitH + "h)" +
+        (t.rej ? ' <span class="pill" style="background:#dc2626">⛔ REJECT</span>' : "") +
         "<br>" + esc(t.err || "—") + " · " + esc(t.status) +
         (t.cpid ? "<br><span style='color:#64748b'>Trụ/tủ: " + esc(t.cpid) + "</span>" : "") +
         (t.owner ? "<br><span style='color:#64748b'>Owner: " + esc(t.owner) + "</span>" : "") + "</div>";
