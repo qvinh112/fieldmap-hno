@@ -87,6 +87,9 @@ let presence = {};           // uid -> {name, role, lat, lng, ts}
 let notes = {};              // safeKey(mã trạm) -> { pushId: {type:'addr'|'site', text, by, ts} }
 let rejLive = {};            // safeKey(Ticket ID) -> 1, từ /tickets/rejects (push_export quét Events Record)
 let openStation = null;      // mã trạm đang mở popup (để cập nhật khi note đổi)
+let stHist = {};             // noteKey(mã trạm) -> bản ghi lịch sử (lazy-load /dashboard/stations/<key>)
+let stFixes = {};            // noteKey(mã trạm) -> đề xuất sửa tọa độ đang chờ ({lat,lng,by,role,ts,status})
+let stOverrides = {};        // noteKey(mã trạm) -> {lat,lng,by,at} tọa độ đã được duyệt (đè STATIONS)
 let db = null, myUid = null;
 const map = L.map("map", { zoomControl: false, preferCanvas: true }).setView([21.02, 105.84], 11);
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(map);
@@ -183,6 +186,16 @@ function startFirebase() {
     // danh sách ticket bị VOMS reject — push_export.py đẩy mỗi lần chạy export
     db.ref("tickets/rejects").on("value", (snap) => {
       rejLive = (snap.val() || {}).ids || {};
+      render();
+    }, () => {});
+    // tọa độ trạm đã được duyệt sửa (đè STATIONS) — nhẹ, tải hết
+    db.ref("dashboard/station_overrides").on("value", (snap) => {
+      stOverrides = snap.val() || {};
+      render();
+    }, () => {});
+    // đề xuất sửa tọa độ đang chờ duyệt (CSE/Admin thấy nút Duyệt)
+    db.ref("dashboard/station_fixes").on("value", (snap) => {
+      stFixes = snap.val() || {};
       render();
     }, () => {});
   }).catch((e) => toast("Firebase auth lỗi: " + e.message, 6000));
@@ -381,16 +394,18 @@ function render() {
   }
   for (const [code, arr] of byStation) {
     arr.sort((a, b) => a.deadline - b.deadline);
-    const s = STATIONS[code], worst = arr[0];
+    const worst = arr[0], pos = stationPos(code);
     const hasNote = notesOf(code).length > 0; // viền cam = trạm có ghi chú hiện trường
     const hasRej = arr.some(isRej);           // viền đỏ đứt = có ticket bị VOMS reject (ưu tiên hơn viền cam)
-    const mk = L.circleMarker([s[0], s[1]], {
+    const hasFix = !!pendingFix(code);        // viền tím đứt = có đề xuất sửa vị trí chờ duyệt
+    const mk = L.circleMarker(pos, {
       radius: arr.some((t) => bucketOf(t) === "over" || bucketOf(t) === "b1") ? 10 : 8,
-      color: hasRej ? "#dc2626" : hasNote ? "#f59e0b" : "#fff", weight: hasRej || hasNote ? 3 : 2,
-      dashArray: hasRej ? "4 3" : null,
+      color: hasRej ? "#dc2626" : hasFix ? "#7c3aed" : hasNote ? "#f59e0b" : "#fff",
+      weight: hasRej || hasFix || hasNote ? 3 : 2,
+      dashArray: hasRej ? "4 3" : hasFix ? "2 3" : null,
       fillColor: BCOLOR[bucketOf(worst)], fillOpacity: 0.95,
     }).addTo(tkLayer);
-    mk.bindPopup(() => popupHtml(code, arr), { maxWidth: 330 });
+    mk.bindPopup(() => popupHtml(code, arr), { maxWidth: 340 });
     mk._st = code; mk._arr = arr;
   }
 
@@ -400,7 +415,7 @@ function render() {
   $("st_urgent").textContent = list.filter((t) => { const b = bucketOf(t); return b === "over" || b === "b1"; }).length;
   const rad = +$("f_radius").value || 10;
   $("st_near").textContent = myPos
-    ? list.filter((t) => t.st && distKm(myPos[0], myPos[1], STATIONS[t.st][0], STATIONS[t.st][1]) <= rad).length
+    ? list.filter((t) => t.st && distKm(myPos[0], myPos[1], stationPos(t.st)[0], stationPos(t.st)[1]) <= rad).length
     : "—";
   $("st_near").nextElementSibling.textContent = "trong " + rad + " km";
 
@@ -415,7 +430,7 @@ function render() {
   $("urgent_list").querySelectorAll(".row").forEach((el) => {
     el.onclick = () => {
       const t = ug[+el.dataset.i];
-      if (t.st) { const s = STATIONS[t.st]; map.setView([s[0], s[1]], 15); openStationPopup(t.st); closeSide(); }
+      if (t.st) { map.setView(stationPos(t.st), 15); openStationPopup(t.st); closeSide(); }
       else toast(t.id + " chưa map được trạm (" + (t.stRaw || "không mã trạm") + ")");
     };
   });
@@ -428,21 +443,26 @@ function openStationPopup(code) {
 }
 
 function popupHtml(code, arr) {
-  const s = STATIONS[code];
-  const near = nearestSEs(s[0], s[1]);
+  const s = STATIONS[code], pos = stationPos(code);
+  const near = nearestSEs(pos[0], pos[1]);
+  const ov = stOverrides[noteKey(code)];
   return "<b>" + esc(code) + "</b> · " + (s[2] === "B" ? "BSS" : "EVCS") +
     "<br><span style='color:#64748b'>" + esc(s[3]) + (s[4] ? " — " + esc(s[4]) : "") + "</span>" +
+    (ov ? "<br><span style='color:#7c3aed;font-size:10.5px'>📍 vị trí đã chỉnh (" + esc(ov.by || "?") + ")</span>" : "") +
     "<div style='margin:5px 0 3px;font-size:11px;color:#64748b'>" + arr.length + " ticket mở:</div>" +
     arr.map((t) => {
       const b = bucketOf(t);
       return '<div class="tk"><span class="pill" style="background:' + BCOLOR[b] + '">' + remText(t) + "</span> <b>" + esc(t.id) + "</b> (SLA " + t.limitH + "h)" +
         (isRej(t) ? ' <span class="pill" style="background:#dc2626">⛔ REJECT</span>' : "") +
         "<br>" + esc(t.err || "—") + " · " + esc(t.status) +
+        "<br><span style='color:#64748b'>Mã trạm: <b>" + esc(t.stRaw || code) + "</b></span>" +
         (t.cpid ? "<br><span style='color:#64748b'>Trụ/tủ: " + esc(t.cpid) + "</span>" : "") +
         (t.owner ? "<br><span style='color:#64748b'>Owner: " + esc(t.owner) + "</span>" : "") + "</div>";
     }).join("") +
     (near.length ? "<div style='margin-top:6px;border-top:2px solid #e2e8f0;padding-top:5px'><b>Gần nhất:</b> " +
       near.map((n) => esc(n.p.name) + " (" + n.d.toFixed(1) + " km)").join(" · ") + "</div>" : "") +
+    fixHtml(code) +
+    stationHistoryHtml(code) +
     notesHtml(code);
 }
 
@@ -511,8 +531,157 @@ function fmDelNote(code, nid) {
     render();
   }
 }
-map.on("popupopen", (e) => { openStation = (e.popup._source && e.popup._source._st) || null; });
+map.on("popupopen", (e) => {
+  openStation = (e.popup._source && e.popup._source._st) || null;
+  if (openStation) loadStationHistory(openStation, e.popup); // lazy-load lịch sử trạm
+});
 map.on("popupclose", () => { openStation = null; });
+
+// ================= tọa độ trạm (override đã duyệt) =================
+function stationPos(code) {
+  const ov = stOverrides[noteKey(code)];
+  if (ov && typeof ov.lat === "number" && typeof ov.lng === "number") return [ov.lat, ov.lng];
+  const s = STATIONS[code];
+  return [s[0], s[1]];
+}
+
+// ================= LỊCH SỬ TÁC ĐỘNG TRẠM (Phần B) =================
+// đọc /dashboard/stations/<key> 1 lần khi mở popup (nhẹ cho mobile), cache lại.
+function stationHistoryHtml(code) {
+  const key = noteKey(code);
+  const rec = stHist[key];
+  const inner = rec === undefined
+    ? "<div style='color:#94a3b8;font-size:11.5px'>Đang tải lịch sử…</div>"
+    : renderHistory(rec);
+  return "<div class='sthist' id='sthist_" + esc(key) + "'>" +
+    "<div class='nhead' style='margin-top:8px;border-top:2px solid #e2e8f0;padding-top:6px'>🛠️ Lịch sử tác động trạm</div>" +
+    inner + "</div>";
+}
+function renderHistory(rec) {
+  if (rec === null || !rec.tickets || !rec.tickets.length)
+    return "<div style='color:#94a3b8;font-size:11.5px'>Chưa có dữ liệu lịch sử (cập nhật theo export hằng ngày).</div>";
+  const ai = rec.ai
+    ? "<div style='background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:7px 9px;margin:4px 0 6px;font-size:11.5px;white-space:pre-wrap'>" +
+        "<b style='color:#7c3aed'>✨ Tóm tắt AI</b><br>" + esc(rec.ai) + "</div>"
+    : "";
+  const rows = rec.tickets.slice(0, 12).map((t) => {
+    const when = t.createMs ? new Date(t.createMs).toLocaleDateString("vi") : "?";
+    const people = [...new Set([].concat(
+      (t.events || []).map((e) => e.proc), (t.sol || []).map((s) => s.proc),
+      (t.parts || []).map((p) => p.proc)).filter(Boolean))];
+    const sol = (t.sol || []).filter((s) => s.desc).map((s) => esc(s.desc)).join("; ");
+    const parts = (t.parts || []).filter((p) => p.mname)
+      .map((p) => esc(p.mname) + (p.qty ? " ×" + esc(p.qty) : "")).join(", ");
+    return "<div class='tk' style='border-left:3px solid #c4b5fd'>" +
+      "<span style='color:#64748b;font-size:10.5px'>" + when + "</span> <b>" + esc(t.err || t.id) + "</b>" +
+      " · " + esc(t.status || "") +
+      (people.length ? "<br><span style='color:#64748b'>👷 " + esc(people.join(", ")) + "</span>" : "") +
+      (sol ? "<br><span style='color:#334155'>🔧 " + sol + "</span>" : "") +
+      (parts ? "<br><span style='color:#b45309'>📦 " + parts + "</span>" : "") + "</div>";
+  }).join("");
+  const more = rec.tickets.length > 12 ? "<div style='color:#94a3b8;font-size:11px'>… và " + (rec.tickets.length - 12) + " ticket cũ hơn</div>" : "";
+  return ai + rows + more;
+}
+function loadStationHistory(code, popup) {
+  const key = noteKey(code);
+  if (stHist[key] !== undefined) return; // đã có (kể cả null = đã tra, rỗng)
+  if (!db) { stHist[key] = null; return; }
+  db.ref("dashboard/stations/" + key).once("value").then((snap) => {
+    stHist[key] = snap.val() || null;
+    refreshHistoryEl(key);
+    if (popup && popup.isOpen && popup.isOpen()) popup.update();
+  }).catch(() => { stHist[key] = null; });
+}
+function refreshHistoryEl(key) {
+  const el = document.getElementById("sthist_" + key);
+  if (!el) return;
+  const head = el.querySelector(".nhead");
+  el.innerHTML = (head ? head.outerHTML : "") + renderHistory(stHist[key]);
+}
+
+// ================= ĐỀ XUẤT SỬA TỌA ĐỘ TRẠM (Phần C) =================
+function pendingFix(code) {
+  const f = stFixes[noteKey(code)];
+  return f && f.status === "pending" ? f : null;
+}
+function canApprove() { return user && (user.role === "CSE" || user.role === "ADMIN"); }
+function fixHtml(code) {
+  const f = pendingFix(code);
+  let h = "<div style='margin-top:7px;border-top:2px solid #e2e8f0;padding-top:6px'>";
+  if (f) {
+    h += "<div style='background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:6px 8px;font-size:11.5px'>" +
+      "📍 <b>Đề xuất sửa vị trí</b> bởi " + esc(f.by || "?") + " · " + fmtAgo(f.ts) +
+      (f.note ? "<br><span style='color:#64748b'>" + esc(f.note) + "</span>" : "") +
+      "<br>tọa độ mới: " + (+f.lat).toFixed(5) + ", " + (+f.lng).toFixed(5) +
+      (canApprove()
+        ? "<div style='margin-top:5px;display:flex;gap:6px'>" +
+            "<button onclick=\"fmApproveFix('" + esc(code) + "')\" style='flex:1;background:#7c3aed;color:#fff'>Duyệt</button>" +
+            "<button onclick=\"fmRejectFix('" + esc(code) + "')\" style='flex:1;background:#f1f5f9;color:#334155'>Từ chối</button></div>"
+        : "<br><span style='color:#94a3b8;font-size:10.5px'>Chờ CSE/Admin duyệt</span>") +
+      "</div>";
+  } else {
+    h += "<button onclick=\"fmStartFix('" + esc(code) + "')\" style='width:100%;background:#f5f3ff;color:#7c3aed;border:1px solid #ddd6fe'>📍 Đề xuất sửa vị trí trạm</button>";
+  }
+  return h + "</div>";
+}
+let fixMarker = null, fixBar = null;
+function fmStartFix(code) {
+  if (!user) return toast("Đăng nhập trước khi đề xuất");
+  if (!db) return toast("Cần chế độ đội (Firebase) để gửi đề xuất");
+  fmCancelFix();
+  map.closePopup();
+  const pos = stationPos(code);
+  map.setView(pos, 17);
+  fixMarker = L.marker(pos, { draggable: true, autoPan: true }).addTo(map)
+    .bindTooltip("Kéo tới vị trí ĐÚNG của trạm", { permanent: true, direction: "top" }).openTooltip();
+  fixBar = L.control({ position: "topright" });
+  fixBar.onAdd = () => {
+    const d = L.DomUtil.create("div");
+    d.style.cssText = "background:#fff;padding:8px;border-radius:9px;box-shadow:0 1px 8px rgba(0,0,0,.25);font-size:12.5px;max-width:220px";
+    d.innerHTML = "<b>Sửa vị trí " + esc(code) + "</b><br>Kéo ghim tới đúng chỗ trạm rồi bấm Lưu." +
+      "<div style='display:flex;gap:6px;margin-top:6px'>" +
+      "<button id='fx_save' style='flex:1;background:#7c3aed;color:#fff'>Lưu đề xuất</button>" +
+      "<button id='fx_cancel' style='flex:1;background:#f1f5f9'>Hủy</button></div>";
+    L.DomEvent.disableClickPropagation(d);
+    return d;
+  };
+  fixBar.addTo(map);
+  setTimeout(() => {
+    const sv = document.getElementById("fx_save"), cc = document.getElementById("fx_cancel");
+    if (sv) sv.onclick = () => fmSaveFix(code);
+    if (cc) cc.onclick = () => { fmCancelFix(); toast("Đã hủy"); };
+  }, 0);
+}
+function fmSaveFix(code) {
+  if (!fixMarker) return;
+  const ll = fixMarker.getLatLng();
+  const entry = { code: code, lat: +ll.lat.toFixed(6), lng: +ll.lng.toFixed(6),
+    by: user.name, role: user.role, ts: Date.now(), status: "pending" };
+  db.ref("dashboard/station_fixes/" + noteKey(code)).set(entry)
+    .then(() => toast("Đã gửi đề xuất, chờ CSE/Admin duyệt"))
+    .catch((e) => toast("Lỗi gửi đề xuất: " + e.message, 6000));
+  fmCancelFix();
+}
+function fmCancelFix() {
+  if (fixMarker) { map.removeLayer(fixMarker); fixMarker = null; }
+  if (fixBar) { map.removeControl(fixBar); fixBar = null; }
+}
+function fmApproveFix(code) {
+  if (!canApprove()) return;
+  const key = noteKey(code), f = stFixes[key];
+  if (!f) return;
+  const ov = { lat: f.lat, lng: f.lng, by: f.by, at: Date.now(), approvedBy: user.name };
+  db.ref("dashboard/station_overrides/" + key).set(ov)
+    .then(() => db.ref("dashboard/station_fixes/" + key).remove())
+    .then(() => { toast("Đã duyệt & cập nhật vị trí trạm " + code); map.closePopup(); })
+    .catch((e) => toast("Lỗi duyệt: " + e.message, 6000));
+}
+function fmRejectFix(code) {
+  if (!canApprove()) return;
+  if (!confirm("Từ chối đề xuất sửa vị trí trạm này?")) return;
+  db.ref("dashboard/station_fixes/" + noteKey(code)).remove()
+    .then(() => { toast("Đã từ chối đề xuất"); map.closePopup(); });
+}
 
 // ---------- vẽ SE online ----------
 function renderSE() {
