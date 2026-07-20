@@ -125,33 +125,69 @@ locBtn.onAdd = () => {
 locBtn.addTo(map);
 
 // ---------- đăng nhập ----------
-$("in_role").addEventListener("change", () => { $("adminrow").style.display = $("in_role").value === "ADMIN" ? "block" : "none"; });
+// SE: ẩn danh (chỉ cần tên). CSE/Admin: email + mật khẩu (Admin tạo trong Firebase console),
+// quyền thật đọc từ /roles/<uid> và được Security Rules cưỡng chế — client chỉ hiển thị.
+$("in_role").addEventListener("change", () => {
+  $("authrow").style.display = $("in_role").value !== "SE" && FIREBASE_CONFIG ? "block" : "none";
+});
 $("mode_hint").textContent = FIREBASE_CONFIG
   ? "Chế độ ĐỘI: vị trí và dữ liệu import chia sẻ real-time cho mọi người."
   : "Chế độ OFFLINE: chưa cấu hình Firebase (config.js) — dữ liệu chỉ trên máy này.";
 
-$("btn_login").addEventListener("click", () => {
+$("btn_login").addEventListener("click", async () => {
+  const btn = $("btn_login");
+  if (btn.disabled) return;
   const name = $("in_name").value.trim();
   if (!name) return toast("Nhập tên hiển thị");
   const role = $("in_role").value;
-  if (role === "ADMIN" && $("in_code").value !== ADMIN_CODE) return toast("Sai mã admin");
-  user = { name: name, role: role };
-  localStorage.setItem("fm_user", JSON.stringify(user));
-  enter();
+  if (!FIREBASE_CONFIG) { // offline một máy: không có gì để bảo vệ
+    user = { name: name, role: role };
+    localStorage.setItem("fm_user", JSON.stringify(user));
+    enter();
+    return;
+  }
+  btn.disabled = true; btn.textContent = "Đang đăng nhập…";
+  try {
+    ensureApp();
+    if (role === "SE") {
+      await firebase.auth().signInAnonymously();
+      user = { name: name, role: "SE" };
+    } else {
+      const em = $("in_email").value.trim(), pw = $("in_pass").value;
+      if (!em || !pw) { toast("CSE/Admin đăng nhập bằng email + mật khẩu do Admin cấp"); return; }
+      const cred = await firebase.auth().signInWithEmailAndPassword(em, pw);
+      const r = (await db.ref("roles/" + cred.user.uid).once("value")).val();
+      if (r !== "ADMIN" && r !== "CSE") {
+        await firebase.auth().signOut();
+        toast("Tài khoản chưa được cấp quyền — Admin cần thêm /roles/<uid> trong Firebase", 7000);
+        return;
+      }
+      // quyền hiệu lực = thấp hơn giữa vai trò chọn và quyền trong DB
+      user = { name: name, role: r === "ADMIN" ? role : "CSE" };
+      if (user.role !== role) toast("Tài khoản này là CSE — vào với quyền CSE", 5000);
+    }
+    localStorage.setItem("fm_user", JSON.stringify(user));
+    enter();
+  } catch (e) {
+    toast("Đăng nhập lỗi: " + (e && e.message ? e.message : e), 7000);
+  } finally {
+    btn.disabled = false; btn.textContent = "Vào bản đồ";
+  }
 });
 $("whoami").addEventListener("click", () => {
   if (!confirm("Đăng xuất?")) return;
   localStorage.removeItem("fm_user");
   if (db && myUid) db.ref("presence/" + myUid).remove();
-  location.reload();
+  const done = () => location.reload();
+  if (appReady) firebase.auth().signOut().then(done, done); else done();
 });
 
 function enter() {
   $("login").style.display = "none";
   $("whoami").innerHTML = "<b>" + esc(user.name) + "</b><br><span style='color:#64748b'>" + user.role + " · chạm để đăng xuất</span>";
-  if (user.role === "ADMIN") $("btn_import").style.display = "";
+  $("btn_import").style.display = user.role === "ADMIN" ? "" : "none";
   startGeo();
-  if (FIREBASE_CONFIG) startFirebase();
+  if (FIREBASE_CONFIG) attachFirebase();
   else { // offline: nạp lại lần import trước + ghi chú trên máy này
     try {
       const c = JSON.parse(localStorage.getItem("fm_tickets") || "null");
@@ -163,14 +199,53 @@ function enter() {
 }
 
 // ---------- Firebase (chế độ đội) ----------
-function startFirebase() {
+let appReady = false, listenersOn = false;
+function ensureApp() {
+  if (appReady) return;
   firebase.initializeApp(FIREBASE_CONFIG);
   db = firebase.database();
-  firebase.auth().signInAnonymously().then((cred) => {
-    myUid = cred.user.uid;
-    pushPresence(true);
-    db.ref("presence/" + myUid).onDisconnect().remove();
-    // listener phải gắn SAU khi auth xong: gắn trước bị rules từ chối và Firebase hủy luôn, không tự gắn lại
+  appReady = true;
+}
+function attachFirebase() {
+  ensureApp();
+  firebase.auth().onAuthStateChanged((u) => {
+    if (u) {
+      myUid = u.uid;
+      verifyRole(u);
+      startListeners();
+    } else if (user && user.role === "SE" && !attachFirebase._triedAnon) {
+      attachFirebase._triedAnon = true;
+      firebase.auth().signInAnonymously().catch((e) => toast("Firebase auth lỗi: " + e.message, 6000));
+    } else if (user && user.role !== "SE") {
+      // phiên email hết hạn / phiên cũ dùng mã admin (đã bỏ) -> bắt đăng nhập lại
+      localStorage.removeItem("fm_user");
+      toast("Phiên đăng nhập hết hạn — đăng nhập lại", 5000);
+      setTimeout(() => location.reload(), 900);
+    }
+  });
+}
+// đối chiếu vai trò đã lưu với /roles/<uid> — phiên cũ tự phong CSE/Admin sẽ bị hạ về SE
+function verifyRole(u) {
+  if (!user || user.role === "SE") return;
+  db.ref("roles/" + u.uid).once("value").then((s) => {
+    const r = s.val();
+    const eff = r === "ADMIN" ? user.role : r === "CSE" ? "CSE" : "SE";
+    if (eff !== user.role) {
+      user.role = eff;
+      localStorage.setItem("fm_user", JSON.stringify(user));
+      toast("Quyền tài khoản thực tế: " + eff, 6000);
+      $("whoami").innerHTML = "<b>" + esc(user.name) + "</b><br><span style='color:#64748b'>" + user.role + " · chạm để đăng xuất</span>";
+      $("btn_import").style.display = user.role === "ADMIN" ? "" : "none";
+      render();
+    }
+  }).catch(() => {});
+}
+function startListeners() {
+  if (listenersOn) return;
+  listenersOn = true;
+  pushPresence(true);
+  db.ref("presence/" + myUid).onDisconnect().remove();
+  // listener phải gắn SAU khi auth xong: gắn trước bị rules từ chối và Firebase hủy luôn, không tự gắn lại
     db.ref("tickets/current").on("value", (snap) => {
       const v = snap.val();
       if (v && v.rows) { tickets = v.rows; meta = v.meta; afterData(); render(); }
@@ -198,7 +273,8 @@ function startFirebase() {
       stFixes = snap.val() || {};
       render();
     }, () => {});
-  }).catch((e) => toast("Firebase auth lỗi: " + e.message, 6000));
+  // popup/workspace mở TRƯỚC khi auth xong -> lịch sử còn treo, nạp bù ngay
+  if (openStation) loadStationHistory(openStation, null);
 }
 let lastSent = 0, lastSentPos = null;
 function pushPresence(force) {
@@ -334,7 +410,11 @@ function afterData() {
 }
 
 // ---------- lọc + vẽ ----------
-["f_radius", "f_type", "f_sla", "f_owner", "f_collab", "f_rej"].forEach((id) => $(id).addEventListener("change", render));
+["f_radius", "f_type", "f_sla", "f_owner", "f_collab", "f_rej"].forEach((id) => $(id).addEventListener("change", () => {
+  // chọn bán kính khi chưa có GPS: filter không áp được — báo rõ thay vì im lặng hiện tất cả
+  if (id === "f_radius" && $("f_radius").value && !myPos) toast("Chưa lấy được GPS — bộ lọc bán kính chưa áp dụng, kiểm tra quyền vị trí", 5000);
+  render();
+}));
 $("q").addEventListener("input", () => { clearTimeout(render._h); render._h = setTimeout(render, 250); });
 // mở/đóng panel bộ lọc (mobile) kèm nền mờ
 function openSide() { $("side").classList.add("open"); $("side-backdrop").classList.add("show"); }
@@ -364,8 +444,10 @@ function filtered() {
     if (col && !tokens(t.collab).includes(col)) return false;
     if (sla && bucketOf(t) !== sla) return false;
     if (rad && myPos && t.st) {
-      const s = STATIONS[t.st];
-      if (distKm(myPos[0], myPos[1], s[0], s[1]) > rad) return false;
+      // dùng stationPos (tôn trọng tọa độ đã duyệt sửa) — trước đây đọc thẳng STATIONS
+      // nên số lọc lệch với ô "trong bán kính" và marker trên bản đồ
+      const p = stationPos(t.st);
+      if (distKm(myPos[0], myPos[1], p[0], p[1]) > rad) return false;
     }
     if (q && !(t.id + " " + t.stRaw + " " + t.cpid + " " + t.err + " " + t.name + " " + t.addr).toLowerCase().includes(q)) return false;
     return true;
@@ -405,7 +487,9 @@ function render() {
       dashArray: hasRej ? "4 3" : hasFix ? "2 3" : null,
       fillColor: BCOLOR[bucketOf(worst)], fillOpacity: 0.95,
     }).addTo(tkLayer);
-    mk.bindPopup(() => popupHtml(code, arr), { maxWidth: 340 });
+    // Bottom-sheet Ticket Workspace thay cho popup nhỏ (giữ popupHtml làm fallback).
+    if (window.Workspace) mk.on("click", () => openStationPopup(code));
+    else mk.bindPopup(() => popupHtml(code, arr), { maxWidth: 340 });
     mk._st = code; mk._arr = arr;
   }
 
@@ -435,10 +519,13 @@ function render() {
     };
   });
   renderSE();
-  if (keepOpen) openStationPopup(keepOpen); // mở lại popup vừa bị clearLayers đóng
+  if (keepOpen && !window.Workspace) openStationPopup(keepOpen); // popup cũ cần mở lại; workspace tự đứng độc lập
+  if (window.Workspace) Workspace.refresh(); // đồng bộ ghi chú/fix/SLA vào sheet (bỏ qua tab Copilot)
 }
 
 function openStationPopup(code) {
+  openStation = code; // giữ để throttle GPS không đóng workspace giữa chừng
+  if (window.Workspace) { Workspace.open(code); return; }
   tkLayer.eachLayer((l) => { if (l._st === code) l.openPopup(); });
 }
 
@@ -477,7 +564,8 @@ function notesOf(code) {
 }
 function notesHtml(code) {
   const list = notesOf(code);
-  const canDel = (n) => user && (user.role === "ADMIN" || n.by === user.name);
+  // xóa: chủ ghi chú (so uid — tên hiển thị giả mạo được), hoặc CSE/Admin; ghi chú cũ chưa có uid so theo tên
+  const canDel = (n) => user && (user.role === "ADMIN" || user.role === "CSE" || (n.uid ? n.uid === myUid : n.by === user.name));
   const items = list.map((n) => {
     const t = n.type === "addr" ? "addr" : "site";
     return '<div class="note ' + t + '">' +
@@ -508,7 +596,7 @@ function fmAddNote(code) {
   const text = $("note_text").value.trim();
   if (!text) return toast("Nhập nội dung ghi chú");
   if (!user) return;
-  const entry = { type: $("note_type").value === "addr" ? "addr" : "site", text: text.slice(0, 300), by: user.name, ts: Date.now() };
+  const entry = { type: $("note_type").value === "addr" ? "addr" : "site", text: text.slice(0, 300), by: user.name, uid: myUid || null, ts: Date.now() };
   const key = noteKey(code);
   noteDraft = { code: null, type: "site", text: "" }; // xóa nháp sau khi gửi
   if (db) {
@@ -558,6 +646,8 @@ function stationHistoryHtml(code) {
     inner + "</div>";
 }
 function renderHistory(rec) {
+  if (rec && rec.failed)
+    return "<div style='color:#dc2626;font-size:11.5px'>Lỗi tải lịch sử (mạng/quyền) — mở lại trạm để thử lại.</div>";
   if (rec === null || !rec.tickets || !rec.tickets.length)
     return "<div style='color:#94a3b8;font-size:11.5px'>Chưa có dữ liệu lịch sử (cập nhật theo export hằng ngày).</div>";
   const ai = rec.ai
@@ -582,15 +672,40 @@ function renderHistory(rec) {
   const more = rec.tickets.length > 12 ? "<div style='color:#94a3b8;font-size:11px'>… và " + (rec.tickets.length - 12) + " ticket cũ hơn</div>" : "";
   return ai + rows + more;
 }
+let stHistT = {};                 // key -> thời điểm fetch, để làm tươi sau khi export mới lên
+const HIST_TTL = 10 * 60000;
 function loadStationHistory(code, popup) {
   const key = noteKey(code);
-  if (stHist[key] !== undefined) return; // đã có (kể cả null = đã tra, rỗng)
-  if (!db) { stHist[key] = null; return; }
+  const cached = stHist[key];
+  const failed = cached && cached.failed;
+  // có bản dùng được và còn tươi -> thôi; bản lỗi hoặc quá hạn -> tra lại
+  if (cached !== undefined && !failed && Date.now() - (stHistT[key] || 0) < HIST_TTL) return;
+  if (!db || !myUid) {
+    // chế độ đội nhưng auth CHƯA xong: đừng cache null (bug cũ: treo "Chưa có dữ liệu"
+    // vĩnh viễn nếu mở trạm trước khi Firebase kịp đăng nhập) — startListeners sẽ nạp bù
+    if (!FIREBASE_CONFIG) { stHist[key] = null; stHistT[key] = Date.now(); }
+    return;
+  }
   db.ref("dashboard/stations/" + key).once("value").then((snap) => {
     stHist[key] = snap.val() || null;
+    stHistT[key] = Date.now();
     refreshHistoryEl(key);
     if (popup && popup.isOpen && popup.isOpen()) popup.update();
-  }).catch(() => { stHist[key] = null; });
+    if (window.Workspace) Workspace.refresh(); // làm tươi tab Lịch sử/Vật tư nếu đang mở
+  }).catch(() => {
+    // bug cũ: lỗi mạng -> cache null im lặng, UI kẹt "Đang tải…" — giờ đánh dấu lỗi + cho thử lại
+    if (stHist[key] === undefined || failed) {
+      stHist[key] = { failed: true };
+      refreshHistoryEl(key);
+      if (window.Workspace) Workspace.refresh();
+    }
+  });
+}
+// workspace gọi khi bấm "Thử lại" ở tab Lịch sử
+function retryStationHistory(code) {
+  const key = noteKey(code);
+  delete stHist[key]; delete stHistT[key];
+  loadStationHistory(code, null);
 }
 function refreshHistoryEl(key) {
   const el = document.getElementById("sthist_" + key);

@@ -1,0 +1,56 @@
+{
+  "rules": {
+    "roles": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "root.child('roles').child(auth.uid).val() === 'ADMIN'"
+      }
+    },
+    "presence": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "tickets": {
+      ".read": "auth != null",
+      ".write": "root.child('roles').child(auth.uid).val() === 'ADMIN' || root.child('roles').child(auth.uid).val() === 'BOT'"
+    },
+    "notes": {
+      ".read": "auth != null",
+      "$st": {
+        "$nid": {
+          ".write": "auth != null && ((!data.exists() && newData.child('uid').val() === auth.uid) || data.child('uid').val() === auth.uid || root.child('roles').child(auth.uid).val() === 'ADMIN' || root.child('roles').child(auth.uid).val() === 'CSE')"
+        }
+      }
+    },
+    "dashboard": {
+      "current": {
+        ".read": "auth != null",
+        ".write": "root.child('roles').child(auth.uid).val() === 'ADMIN' || root.child('roles').child(auth.uid).val() === 'BOT'"
+      },
+      "full": {
+        ".read": "auth != null",
+        ".write": "root.child('roles').child(auth.uid).val() === 'ADMIN' || root.child('roles').child(auth.uid).val() === 'BOT'"
+      },
+      "stations": {
+        ".read": "auth != null",
+        ".write": "root.child('roles').child(auth.uid).val() === 'ADMIN' || root.child('roles').child(auth.uid).val() === 'BOT'"
+      },
+      "explain": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      },
+      "station_fixes": {
+        ".read": "auth != null",
+        "$st": {
+          ".write": "auth != null"
+        }
+      },
+      "station_overrides": {
+        ".read": "auth != null",
+        ".write": "root.child('roles').child(auth.uid).val() === 'ADMIN' || root.child('roles').child(auth.uid).val() === 'CSE'"
+      }
+    }
+  }
+}

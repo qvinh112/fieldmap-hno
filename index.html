@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>CCTS Field Map — HNO</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="stylesheet" href="workspace.css?v=20260720a" />
 <style>
   * { box-sizing: border-box; margin: 0; -webkit-tap-highlight-color: transparent; }
   html, body { height: 100%; font-family: "Segoe UI", system-ui, sans-serif; }
@@ -84,7 +85,7 @@
   #login h2 { font-size: 17px; margin-bottom: 3px; }
   #login .sub { font-size: 12px; color: #64748b; margin-bottom: 12px; }
   #login .btn { width: 100%; margin-top: 14px; padding: 10px; }
-  #adminrow { display: none; }
+  #authrow { display: none; }
   .hint { font-size: 11px; color: #94a3b8; margin-top: 8px; }
 
   #toast { position: fixed; bottom: calc(14px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 9px 16px; border-radius: 99px; font-size: 12.5px; z-index: 4000; display: none; max-width: 90vw; }
@@ -234,9 +235,11 @@
       <option value="CSE">CSE</option>
       <option value="ADMIN">Admin (điều phối, import dữ liệu)</option>
     </select>
-    <div id="adminrow">
-      <label>Mã admin</label>
-      <input type="password" id="in_code" autocomplete="off" />
+    <div id="authrow">
+      <label>Email (Admin cấp tài khoản)</label>
+      <input type="text" id="in_email" autocomplete="username" inputmode="email" />
+      <label>Mật khẩu</label>
+      <input type="password" id="in_pass" autocomplete="current-password" />
     </div>
     <button class="btn pri" id="btn_login">Vào bản đồ</button>
     <div class="hint" id="mode_hint"></div>
@@ -253,7 +256,9 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
 <!-- bump ?v= mỗi lần sửa app.js/config.js để trình duyệt nạp code mới, không dùng bản cache cũ -->
-<script src="config.js?v=20260719"></script>
-<script src="app.js?v=20260719"></script>
+<script src="config.js?v=20260720a"></script>
+<script src="app.js?v=20260720a"></script>
+<script src="providers.js?v=20260720a"></script>
+<script src="workspace.js?v=20260720a"></script>
 </body>
 </html>

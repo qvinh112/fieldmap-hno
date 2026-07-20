@@ -28,29 +28,55 @@ Toàn bộ chạy **0 đồng**: frontend tĩnh (host miễn phí) + Firebase Re
 1. Vào https://console.firebase.google.com → **Add project** (tên tùy ý, tắt Analytics).
 2. Cột trái **Databases & Storage → Realtime Database → Create database** → chọn `asia-southeast1` (Singapore) → chế độ **locked**.
    (Giao diện cũ: menu **Build → Realtime Database**.)
-3. Tab **Rules**, dán rồi Publish:
-```json
-{
-  "rules": {
-    "presence": { ".read": "auth != null", "$uid": { ".write": "auth != null && auth.uid == $uid" } },
-    "tickets":  { ".read": "auth != null", ".write": "auth != null" },
-    "notes":    { ".read": "auth != null", ".write": "auth != null" }
-  }
-}
-```
-(Node `notes` là ghi chú tại trạm SE tạo — sửa địa chỉ / báo bất thường. Thiếu dòng này thì
-ghi chú sẽ báo `permission_denied`.)
-4. Cột trái **Security → Authentication → Get started → Sign-in method → Anonymous → Enable**.
+3. Tab **Rules**: dán nguyên nội dung file **`firebase.rules.json`** trong thư mục này → Publish.
+4. Cột trái **Security → Authentication → Get started → Sign-in method**: bật **Anonymous**
+   (cho SE) và **Email/Password** (cho CSE/Admin + bot).
 5. Trang Project Overview bấm **+ Add app → biểu tượng `</>` (Web)** → đặt tên → copy khối `firebaseConfig` dán vào `config.js` (chỉ cần `apiKey`, `authDomain`, `databaseURL`, `projectId`).
    Nếu khối config thiếu `databaseURL`: lấy URL ở đầu trang Realtime Database (dạng
    `https://<project>-default-rtdb.asia-southeast1.firebasedatabase.app`) tự thêm vào.
 
 Chưa làm bước này app vẫn chạy được ở **chế độ offline** (một máy, không chia sẻ GPS).
 
+## Bước 1b — Phân quyền (BẮT BUỘC trước khi dùng thật)
+
+Từ 20/07/2026 **bỏ mã admin chung** (`ADMIN_CODE` nằm trong file công khai — ai xem source cũng
+đọc được, và ai cũng tự chọn được vai trò CSE để duyệt sửa tọa độ). Thay bằng: **SE vào ẩn danh
+(chỉ nhập tên); CSE/Admin đăng nhập email + mật khẩu; quyền thật nằm ở node `/roles` và được
+Security Rules cưỡng chế** — client chỉ hiển thị.
+
+Thứ tự làm (làm đúng thứ tự để không gãy pusher đang chạy):
+
+1. **Authentication → Users → Add user**: tạo từng tài khoản CSE/Admin
+   (vd `vinh@fieldmap.local` — email không cần có thật) và MỘT tài khoản bot cho máy đẩy dữ liệu
+   (vd `bot@fieldmap.local`, mật khẩu dài ngẫu nhiên).
+2. **Realtime Database → Data**: tạo node `roles` → con là từng `uid` (copy cột User UID ở tab
+   Users) với giá trị chuỗi: `"ADMIN"`, `"CSE"` hoặc `"BOT"`. Ví dụ:
+   `roles/AbC123…: "ADMIN"`, `roles/XyZ456…: "BOT"`.
+3. Trên máy chạy sla_monitor: thêm vào `sla_monitor/.env`:
+   `FIREBASE_BOT_EMAIL=bot@fieldmap.local` + `FIREBASE_BOT_PASSWORD=…` rồi test
+   `python fieldmap_push.py --once` (mọi pusher: fieldmap/dashboard/push_export/station_history
+   dùng chung đăng nhập này).
+4. **Cuối cùng** mới dán `firebase.rules.json` vào tab Rules → Publish. (Publish trước khi có
+   bot + roles thì pusher và Import Excel sẽ bị `permission denied`.)
+
+Ai được làm gì sau khi bật:
+
+| Node | SE (ẩn danh) | CSE | Admin | Bot |
+|---|---|---|---|---|
+| `tickets`, `dashboard/current·full·stations` | đọc | đọc | đọc + ghi | ghi |
+| `presence` | ghi uid mình | như SE | như SE | — |
+| `notes` | tạo; sửa/xóa của mình | xóa mọi ghi chú | xóa mọi ghi chú | — |
+| `dashboard/station_fixes` (đề xuất tọa độ) | tạo | tạo | tạo | — |
+| `dashboard/station_overrides` (duyệt tọa độ) | — | ghi | ghi | — |
+| `roles` | đọc | đọc | ghi | — |
+
+Còn mở có chủ đích: `dashboard/explain` vẫn `auth != null` vì web dashboard/report (đăng nhập
+ẩn danh) đang ghi giải trình vào đó — siết nốt thì phải chuyển 2 web kia sang tài khoản thật.
+
 ## Bước 2 — Host miễn phí (link cố định, không chết như trycloudflare)
 
 Cách dễ nhất — **GitHub Pages**:
-1. Tạo repo (private cũng được với GitHub Pro; public thì lưu ý đổi `ADMIN_CODE`).
+1. Tạo repo (private cũng được với GitHub Pro; public cũng an toàn — không còn mã bí mật nào trong source, quyền nằm ở Security Rules).
 2. Đẩy toàn bộ thư mục `fieldmap/` lên repo.
 3. Settings → Pages → Deploy from branch → nhánh `main`, thư mục `/ (root)`.
 4. Link dạng `https://<user>.github.io/<repo>/` — gửi cho cả đội, mở trên điện thoại là chạy.
@@ -60,9 +86,9 @@ chỉ cho lấy GPS trên HTTPS (hoặc localhost).
 
 ## Bước 3 — Dùng hằng ngày
 
-- **Admin**: đăng nhập vai trò Admin (mã trong `config.js`) → **Import Excel** file export
-  `Tickets.xlsx` từ CCTS → dữ liệu đẩy tức thì cho mọi máy đang mở app.
-- **SE/CSE**: mở link, nhập tên → cho phép quyền vị trí → icon của mình hiện trên bản đồ,
+- **Admin/CSE**: chọn vai trò → đăng nhập email + mật khẩu (Admin tạo ở Bước 1b). Admin có nút
+  **Import Excel** file export `Tickets.xlsx` từ CCTS → dữ liệu đẩy tức thì cho mọi máy đang mở app.
+- **SE**: mở link, nhập tên → cho phép quyền vị trí → icon của mình hiện trên bản đồ,
   vị trí gửi khi di chuyển >100m (tối thiểu 90s/lần). Tắt tab = offline ngay.
 - Bấm 1 ticket trong danh sách "Ưu tiên xử lý" → bay tới trạm, popup hiện chi tiết + 3 SE gần nhất.
 

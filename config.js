@@ -10,8 +10,14 @@ const FIREBASE_CONFIG = {
 };
 // Để FIREBASE_CONFIG = null nếu muốn quay lại chế độ OFFLINE (một máy, không chia sẻ GPS/ticket).
 
-// 2) Mã mở quyền Admin (được import Excel + đẩy dữ liệu cho cả đội) — đổi trước khi dùng thật
-const ADMIN_CODE = "P6RCJ0NL";
+// 2) Quyền CSE/Admin KHÔNG còn dùng mã chung (mã trong file công khai = ai cũng đọc được).
+//    CSE/Admin đăng nhập bằng tài khoản email/mật khẩu do Admin tạo trong Firebase console,
+//    quyền thật nằm ở node /roles/<uid> + Security Rules (xem README + firebase.rules.json).
 
 // 3) Tần suất gửi vị trí: gửi khi di chuyển >100m, tối thiểu HEARTBEAT_S giây/lần khi đứng yên
 const HEARTBEAT_S = 90;
+
+// 4) Field Copilot: CHỈ URL của backend (KHÔNG bao giờ để API key ở đây — file này công khai).
+//    Để trống/null = Copilot tắt (workspace vẫn chạy các tab khác).
+//    Dev local: "http://localhost:8900"; production: URL backend đã deploy riêng.
+const COPILOT_API_URL = null;
