@@ -90,15 +90,12 @@
     return STHIST()[nk(stationCode)] || null;
   }
 
-  // TicketEvent thống nhất từ events + solutions của các ticket tại trạm
+  // Lịch sử tác động = phần Solution (+ Vật tư) của các ticket tại trạm.
+  // KHÔNG dùng Events Record (chỉ là nhật ký đổi trạng thái, không phải thao tác sửa) — chốt 22/07/2026.
   function _recEvents(rec, opts) {
     if (!rec || !rec.tickets) return [];
     const evs = [];
     for (const t of rec.tickets) {
-      for (const e of (t.events || [])) {
-        evs.push({ ts: e.createMs || t.createMs, ticketId: t.id, actor: e.proc || "",
-          kind: "event", content: (e.detail || "") + (e.status ? " · " + e.status : ""), source: "CCTS Events Record" });
-      }
       for (const s of (t.sol || [])) {
         if (s.desc) evs.push({ ts: t.createMs, ticketId: t.id, actor: s.proc || "",
           kind: "solution", content: s.desc, source: "CCTS Solutions" });

@@ -323,17 +323,19 @@ $("fileinput").addEventListener("change", async (e) => {
       for (const r of XLSX.utils.sheet_to_json(wb.Sheets["Spare Parts Record"], { defval: null }))
         if (r["Ticket ID"]) partsIds.add(String(r["Ticket ID"]).trim());
     }
-    // Reject = VOMS "add event record" trả ticket về Open (Processor=VOMS, Status=Open, có Record Detail)
-    // — cùng luật với dashboard; dòng Open ghi chú rỗng là sự kiện mở ticket, KHÔNG tính
+    // Reject = ticket có >=2 dòng VOMS/Open (Processor=VOMS, Status=Open) — cùng luật
+    // dashboard (chốt 22/07/2026): dòng VOMS/Open sớm nhất là sự kiện MỞ ticket, mỗi
+    // dòng VOMS/Open thêm là một lần VOMS trả ticket về Open, không phụ thuộc ghi chú
     const rejIds = new Set();
     if (wb.Sheets["Events Record"]) {
+      const vomsOpen = {};
       for (const r of XLSX.utils.sheet_to_json(wb.Sheets["Events Record"], { defval: null })) {
         const tid = String(r["Ticket ID"] || "").trim();
         const st = String(r["Ticket Status"] || "").trim().toLowerCase();
         const proc = String(r["Processor"] || "").trim().toUpperCase();
-        const detail = String(r["Record Detail"] || "").trim();
-        if (tid && (/close rejected/i.test(st) || (proc === "VOMS" && st === "open" && detail && detail !== "----"))) rejIds.add(tid);
+        if (tid && proc === "VOMS" && st === "open") vomsOpen[tid] = (vomsOpen[tid] || 0) + 1;
       }
+      for (const tid in vomsOpen) if (vomsOpen[tid] >= 2) rejIds.add(tid);
     }
     ingest(rows, partsIds, rejIds, f.name);
   } catch (err) { toast("Lỗi đọc file: " + err.message, 6000); }
@@ -657,7 +659,7 @@ function renderHistory(rec) {
   const rows = rec.tickets.slice(0, 12).map((t) => {
     const when = t.createMs ? new Date(t.createMs).toLocaleDateString("vi") : "?";
     const people = [...new Set([].concat(
-      (t.events || []).map((e) => e.proc), (t.sol || []).map((s) => s.proc),
+      (t.sol || []).map((s) => s.proc),
       (t.parts || []).map((p) => p.proc)).filter(Boolean))];
     const sol = (t.sol || []).filter((s) => s.desc).map((s) => esc(s.desc)).join("; ");
     const parts = (t.parts || []).filter((p) => p.mname)
