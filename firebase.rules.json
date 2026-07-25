@@ -39,6 +39,13 @@
       },
       "explain": {
         ".read": "auth != null",
+        "$tid": {
+          ".write": "auth != null",
+          ".validate": "newData.hasChildren(['id']) && newData.child('id').isString() && (!newData.hasChild('c') || newData.child('c').isString() && newData.child('c').val().length < 400) && (!newData.hasChild('t') || newData.child('t').isString() && newData.child('t').val().length < 4000) && (!newData.hasChild('up') || newData.child('up').isNumber())"
+        }
+      },
+      "audit": {
+        ".read": "auth != null",
         ".write": "auth != null"
       },
       "station_fixes": {
