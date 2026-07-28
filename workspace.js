@@ -151,7 +151,7 @@
         ${row("Urgency", E(s.urgency))}
         ${row("Create Time", E(ct))}
         ${row("Deadline", E(dl))}
-        ${row("SLA vùng", s.slaH ? s.slaH + "h" : "")}
+        ${row("SLA vùng", s.noSla ? "Ngoài luồng API creation (không SLA)" : s.slaH ? s.slaH + "h" : "")}
         ${row("Địa chỉ", E(s.addr || prof.addr))}
       </div>
       <div class="ws-sub">${fixH}</div>

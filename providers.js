@@ -38,6 +38,7 @@
       rej: typeof isRej === "function" ? isRej(t) : !!t.rej,
       slaH: t.limitH,
       deadline: t.deadline,
+      noSla: !!t.noSla,
       createMs: t.createT,
       owner: t.owner || "",
       collab: t.collab || "",
@@ -61,7 +62,7 @@
     return TICKETS()
       .filter((t) => (t.st || t.stRaw) === stationCode || t.st === stationCode)
       .map(ticketToSummary)
-      .sort((a, b) => (a.deadline || 0) - (b.deadline || 0));
+      .sort((a, b) => (a.noSla ? Infinity : a.deadline || 0) - (b.noSla ? Infinity : b.deadline || 0));
   }
 
   function getTicketDetail(ticketId) {

@@ -23,6 +23,9 @@ function toDate(v) {
 function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 // tách chuỗi nhiều tên "a; b, c" -> ["a","b","c"]
 function tokens(s) { return String(s || "").split(/[;,]/).map((x) => x.trim()).filter(Boolean); }
+// SE (site engineer) — chỉ hiện ticket có collaborator thuộc danh sách này (se_names.js)
+const SE_SET = new Set((typeof SE_NAMES !== "undefined" ? SE_NAMES : []).map((s) => String(s).toLowerCase()));
+function hasSE(collab) { return tokens(collab).some((c) => SE_SET.has(c.toLowerCase())); }
 function distKm(a, b, c, d) { // haversine
   const r = Math.PI / 180, x = Math.sin((c - a) * r / 2), y = Math.sin((d - b) * r / 2);
   return 12742 * Math.asin(Math.sqrt(x * x + Math.cos(a * r) * Math.cos(c * r) * y * y));
@@ -66,11 +69,16 @@ const BUCKETS = [
   ["b99", "> 24 giờ", "#16a34a"],
 ];
 const BCOLOR = Object.fromEntries(BUCKETS.map((b) => [b[0], b[2]]));
+BCOLOR.gray = "#94a3b8"; // ticket ngoài luồng API creation: không có SLA, tô xám
+// khóa sắp xếp theo hạn: ticket xám (không SLA) luôn xếp cuối
+function dlKey(t) { return t.noSla ? Infinity : t.deadline; }
 function bucketOf(t) {
+  if (t.noSla) return "gray"; // ngoài API creation -> không tính giờ, màu xám
   const h = (t.deadline - Date.now()) / HOURS;
   return h < 0 ? "over" : h <= 1 ? "b1" : h <= 3 ? "b3" : h <= 8 ? "b8" : h <= 24 ? "b24" : "b99";
 }
 function remText(t) {
+  if (t.noSla) return "không SLA";
   let ms = t.deadline - Date.now();
   const over = ms < 0; ms = Math.abs(ms);
   const h = Math.floor(ms / HOURS), m = Math.floor((ms % HOURS) / 60000);
@@ -104,6 +112,7 @@ legend.onAdd = () => {
   const d = L.DomUtil.create("div", "legend");
   d.innerHTML = '<div class="legend-hd">SLA còn lại <span class="legend-caret">▾</span></div><div class="legend-body">' +
     BUCKETS.slice().reverse().map((b) => '<span class="dot" style="background:' + b[2] + '"></span>' + b[1]).join("<br>") +
+    '<br><span class="dot" style="background:' + BCOLOR.gray + '"></span>Ngoài API creation (không SLA)' +
     '<br><span class="dot" style="background:#0ea5e9"></span>SE online' +
     '<br><span class="dot" style="background:#f59e0b"></span>Chậm cập nhật' +
     '<br><span class="dot" style="background:#fff;border:2px solid #f59e0b"></span>Trạm có ghi chú' +
@@ -353,17 +362,26 @@ function ingest(rows, partsIds, rejIds, fname) {
     const addr = String(r["Address"] || "");
     if (!stKey && !/hà nội|ha noi|hanoi/i.test(addr)) continue; // ngoài HNO
     nHN++;
+    const collab = String(r["Collaborators"] || "").trim();
+    if (!hasSE(collab)) continue; // chỉ hiện ticket có collaborator là SE
     const createT = toDate(r["Create Time"]);
     if (!createT) continue;
-    // hạn xử lý: V1=3h; V2=4h (có vật tư 7h); V3=7h (có vật tư 12h); còn lại 48h
-    // (SLA nhanh chỉ áp cho nguồn API creation — rule 07/07/2026)
-    const zone = /api/i.test(String(r["Ticket Source"] || "")) ? zoneOf(stRaw) : null;
-    const hasParts = partsIds.has(id);
-    let limitH = 48;
-    if (zone === "V1") limitH = 3;
-    else if (zone === "V2") limitH = hasParts ? 7 : 4;
-    else if (zone === "V3") limitH = hasParts ? 12 : 7;
-    const dl = toDate(r["Troubleshooting deadline"]);
+    // ticket API creation: có SLA nhanh (V1=3h; V2=4h/7h; V3=7h/12h; còn lại 48h — rule 07/07/2026).
+    // ticket NGOÀI API creation: không có SLA -> tô xám, không đếm giờ (noSla=1).
+    const apiCreation = /api/i.test(String(r["Ticket Source"] || ""));
+    let limitH = null, deadline = Infinity, noSla = 1;
+    if (apiCreation) {
+      const zone = zoneOf(stRaw);
+      const hasParts = partsIds.has(id);
+      limitH = 48;
+      if (zone === "V1") limitH = 3;
+      else if (zone === "V2") limitH = hasParts ? 7 : 4;
+      else if (zone === "V3") limitH = hasParts ? 12 : 7;
+      const dl = toDate(r["Troubleshooting deadline"]);
+      // hạn dùng để hiển thị: hạn theo vùng nếu chặt hơn hạn CCTS
+      deadline = Math.min(+createT + limitH * HOURS, dl ? +dl : Infinity);
+      noSla = 0;
+    }
     out.push({
       id: id,
       name: String(r["Ticket Name"] || "").slice(0, 90),
@@ -373,14 +391,14 @@ function ingest(rows, partsIds, rejIds, fname) {
       err: String(r["Error Code"] || "").slice(0, 60),
       status: status,
       owner: String(r["Ticket Owner"] || "").trim(),
-      collab: String(r["Collaborators"] || "").trim(),
+      collab: collab,
       rej: rejIds.has(id) || /close rejected/i.test(status) ? 1 : 0, // bị VOMS reject / Close rejected
       urg: String(r["Urgency Level"] || ""),
       addr: addr.slice(0, 120),
       createT: +createT,
       limitH: limitH,
-      // hạn dùng để hiển thị: hạn theo vùng nếu chặt hơn hạn CCTS
-      deadline: Math.min(+createT + limitH * HOURS, dl ? +dl : Infinity),
+      noSla: noSla,
+      deadline: noSla ? null : deadline,
     });
   }
   tickets = out;
@@ -477,7 +495,7 @@ function render() {
     byStation.get(t.st).push(t);
   }
   for (const [code, arr] of byStation) {
-    arr.sort((a, b) => a.deadline - b.deadline);
+    arr.sort((a, b) => dlKey(a) - dlKey(b));
     const worst = arr[0], pos = stationPos(code);
     const hasNote = notesOf(code).length > 0; // viền cam = trạm có ghi chú hiện trường
     const hasRej = arr.some(isRej);           // viền đỏ đứt = có ticket bị VOMS reject (ưu tiên hơn viền cam)
@@ -506,7 +524,7 @@ function render() {
   $("st_near").nextElementSibling.textContent = "trong " + rad + " km";
 
   // danh sách ưu tiên
-  const ug = list.slice().sort((a, b) => a.deadline - b.deadline).slice(0, 40);
+  const ug = list.slice().sort((a, b) => dlKey(a) - dlKey(b)).slice(0, 40);
   $("urgent_list").innerHTML = ug.map((t, i) =>
     '<div class="row" data-i="' + i + '"><span class="dot" style="background:' + BCOLOR[bucketOf(t)] + '"></span>' +
     "<span>" + esc(t.stRaw || t.id) + (isRej(t) ? " <span style='color:#dc2626;font-weight:700;font-size:10px'>⛔ REJECT</span>" : "") +
@@ -541,7 +559,7 @@ function popupHtml(code, arr) {
     "<div style='margin:5px 0 3px;font-size:11px;color:#64748b'>" + arr.length + " ticket mở:</div>" +
     arr.map((t) => {
       const b = bucketOf(t);
-      return '<div class="tk"><span class="pill" style="background:' + BCOLOR[b] + '">' + remText(t) + "</span> <b>" + esc(t.id) + "</b> (SLA " + t.limitH + "h)" +
+      return '<div class="tk"><span class="pill" style="background:' + BCOLOR[b] + '">' + remText(t) + "</span> <b>" + esc(t.id) + "</b>" + (t.noSla ? " (ngoài API creation)" : " (SLA " + t.limitH + "h)") +
         (isRej(t) ? ' <span class="pill" style="background:#dc2626">⛔ REJECT</span>' : "") +
         "<br>" + esc(t.err || "—") + " · " + esc(t.status) +
         "<br><span style='color:#64748b'>Mã trạm: <b>" + esc(t.stRaw || code) + "</b></span>" +
