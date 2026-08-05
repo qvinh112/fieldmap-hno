@@ -670,7 +670,9 @@ function renderHistory(rec) {
     return "<div style='color:#dc2626;font-size:11.5px'>Lỗi tải lịch sử (mạng/quyền) — mở lại trạm để thử lại.</div>";
   if (rec === null || !rec.tickets || !rec.tickets.length)
     return "<div style='color:#94a3b8;font-size:11.5px'>Chưa có dữ liệu lịch sử (cập nhật theo export hằng ngày).</div>";
-  const ai = rec.ai
+  // AI_SUMMARY_ON = false thì bỏ hẳn khối tóm tắt (05/08/2026) — xem config.js mục 5.
+  const aiOn = (typeof AI_SUMMARY_ON === "undefined") || AI_SUMMARY_ON;
+  const ai = (aiOn && rec.ai)
     ? "<div style='background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:7px 9px;margin:4px 0 6px;font-size:11.5px;white-space:pre-wrap'>" +
         "<b style='color:#7c3aed'>✨ Tóm tắt AI</b><br>" + esc(rec.ai) + "</div>"
     : "";

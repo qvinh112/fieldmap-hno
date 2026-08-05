@@ -21,3 +21,10 @@ const HEARTBEAT_S = 90;
 //    Để trống/null = Copilot tắt (workspace vẫn chạy các tab khác).
 //    Dev local: "http://localhost:8900"; production: URL backend đã deploy riêng.
 const COPILOT_API_URL = null;
+
+// 5) Tóm tắt AI lịch sử trạm (khối "✨ Tóm tắt AI" ở popup bản đồ và tab Lịch sử của workspace).
+//    false = TẮT hiển thị (05/08/2026, theo yêu cầu user). Lịch sử ticket vẫn hiện đầy đủ.
+//    Lưu ý: cờ này chỉ tắt phần HIỂN THỊ. Bên sinh dữ liệu là sla_monitor/station_history.py
+//    vẫn gọi DeepSeek (trần 200 lượt/lần chạy) và vẫn ghi trường `ai` lên Firebase — muốn
+//    ngừng tốn tiền thì phải tắt cả bên đó.
+const AI_SUMMARY_ON = false;

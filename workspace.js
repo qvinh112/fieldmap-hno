@@ -175,7 +175,9 @@
         <button class="chip${histFilter.sameErrorOn ? " on" : ""}" data-same="1">Cùng Error Code</button>
         <button class="chip${histFilter.withParts ? " on" : ""}" data-parts="1">Có thay vật tư</button>
       </div>`;
-    const ai = h.ai ? `<div class="ws-ai">✨ <b>Tóm tắt AI</b><br>${E(h.ai)}</div>` : "";
+    // AI_SUMMARY_ON = false thì bỏ hẳn khối tóm tắt (05/08/2026) — xem config.js mục 5.
+    const aiOn = (typeof AI_SUMMARY_ON === "undefined") || AI_SUMMARY_ON;
+    const ai = (aiOn && h.ai) ? `<div class="ws-ai">✨ <b>Tóm tắt AI</b><br>${E(h.ai)}</div>` : "";
     if (!h.events.length) return chips + ai + `<div class="ws-empty">Chưa có dữ liệu lịch sử từ CCTS cho bộ lọc này.</div>`;
     const kindLabel = { event: "Tác động", solution: "Giải pháp", part: "Vật tư" };
     const rows = h.events.slice(0, 60).map((e) => `
