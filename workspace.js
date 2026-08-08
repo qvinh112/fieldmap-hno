@@ -14,6 +14,9 @@
   const COPILOT_URL = () => (typeof COPILOT_API_URL !== "undefined" ? COPILOT_API_URL : null);
   const COPILOT_TOK = () => (typeof COPILOT_TOKEN !== "undefined" ? COPILOT_TOKEN : null);
   const CCTS_URL = (id) => (typeof CCTS_TICKET_URL !== "undefined" ? CCTS_TICKET_URL(id) : "");
+  // huy hiệu "lỗi lặp lại" dùng chung với bản đồ (app.js) — có guard vì workspace.js
+  // được nạp độc lập trong một số trang test.
+  const REP_BADGE = (t) => (typeof repBadge === "function" ? repBadge(t) : "");
 
   let ws = { code: null, ticketId: null, tab: "overview", state: "half" };
 
@@ -93,6 +96,7 @@
       <div class="ws-hrow">
         <div class="ws-title">${E(prof.code)} <span class="ws-badge">${E(prof.type)}</span>
           ${cur && cur.rej ? '<span class="ws-badge rej">⛔ VOMS REJECT</span>' : ""}
+          ${t ? REP_BADGE(t) : ""}
           ${cur && cur.model ? `<span class="ws-badge">${E(cur.model)}</span>` : ""}</div>
         <button id="ws-close" aria-label="Đóng">✕</button>
       </div>
@@ -144,7 +148,8 @@
         ${row("Model", E(s.model))}
         ${row("BOM", E(s.bom))}
         ${row("Firmware", E(s.firmware))}
-        ${row("Error Code", E(s.err))}
+        ${row("Error Code", E(s.errCode ? s.errCode + " — " + s.err : s.err))}
+        ${row("Lỗi lặp lại (30 ngày)", repRowHtml(s))}
         ${row("Trạng thái", E(s.status) + (s.rej ? " · ⛔ REJECT" : ""))}
         ${row("Owner", E(s.owner))}
         ${row("Collaborators", E(s.collab))}
@@ -154,8 +159,57 @@
         ${row("SLA vùng", s.noSla ? "Ngoài luồng API creation (không SLA)" : s.slaH ? s.slaH + "h" : "")}
         ${row("Địa chỉ", E(s.addr || prof.addr))}
       </div>
+      ${vomsHtml(s)}
       <div class="ws-sub">${fixH}</div>
       <div class="ws-sub">${notesH}</div>`;
+  }
+
+  // ---- Khối VOMS: "Số lần lặp" của cảnh báo + Log CPO (voms.vgreen.net) ----
+  // Ghép theo Mã yêu cầu: third_id của CCTS == caseCode của VOMS. Không khớp được
+  // (hoặc chưa đăng nhập VOMS) -> KHÔNG hiện khối này, thay vì hiện số 0 gây hiểu nhầm.
+  const PTYPE_VI = () => (typeof VOMS_PTYPE !== "undefined" ? VOMS_PTYPE : {});
+  function vomsHtml(s) {
+    const v = s && s.voms;
+    if (!v) return "";
+    const pt = PTYPE_VI()[v.ptype] || v.ptype || "";
+    // rep chỉ có ở yêu cầu nguồn CPO. Nói rõ VÌ SAO trống, đừng để KTV tưởng "0 lần".
+    const WHY = {
+      bss: "Tủ đổi pin — VOMS không có Log CPO cho BSS",
+      cskh: "Yêu cầu do CSKH tạo — không có cảnh báo CPO",
+      web: "Yêu cầu tạo tay trên web — không có cảnh báo CPO",
+    };
+    const repTxt = v.rep == null
+      ? `<i class="muted">${E(WHY[v.src] || "VOMS không trả số lần lặp")}</i>`
+      : `<b style="color:${v.rep >= 3 ? "#dc2626" : v.rep >= 2 ? "#f97316" : "#0f172a"}">${E(v.rep)} lần</b>`;
+    // VOMS trả giờ ISO UTC -> đổi sang giờ máy để KTV khỏi tự trừ 7 tiếng.
+    const vt = (s) => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toLocaleString("vi") : (s || "?"); };
+    const logs = (v.logs || []).map((l) => `
+      <div class="ws-ev">
+        <div class="ws-ev-h"><span>${E(vt(l.ts))}</span><span class="ws-ev-k">${E(l.st || "")}</span></div>
+        <div><b>${E(l.name || "—")}</b>${l.cpoId ? ` <span class="muted">· CPO ${E(l.cpoId)}</span>` : ""}</div>
+        ${l.closed ? `<div class="muted">đóng CPO: ${E(vt(l.closed))}</div>` : ""}
+      </div>`).join("");
+    return `
+      <div class="ws-card">
+        <div class="ws-psec-h">🛰️ VOMS · ${E(v.case)}</div>
+        <div class="ws-kv"><span>Số lần lặp (CPO)</span><b>${repTxt}</b></div>
+        <div class="ws-kv"><span>Loại cảnh báo</span><b>${E(pt) || "<i class='muted'>—</i>"}</b></div>
+        <div class="ws-kv"><span>Trạng thái VOMS</span><b>${E(v.status) || "<i class='muted'>—</i>"}</b></div>
+        <div class="ws-psec-h" style="margin-top:8px">Log CPO${v.logs && v.logs.length ? " (" + v.logs.length + " dòng gần nhất)" : ""}</div>
+        ${logs || `<div class="ws-empty">Không có log CPO nào.</div>`}
+      </div>`;
+  }
+
+  // Ô "Lỗi lặp lại": rep do sla_monitor đếm sẵn (cùng SN thiết bị + cùng mã lỗi, 30 ngày,
+  // tính cả ticket này). rep=0 nghĩa là CHƯA BIẾT — ticket vào bằng Import Excel tay không
+  // có lịch sử để đếm — nên trả "" để row() hiện "Chưa đồng bộ" thay vì "0 lần".
+  function repRowHtml(s) {
+    const t = TICKETS().find((x) => x.id === s.id);
+    const n = s.rep || 0;
+    if (!n) return "";
+    if (n < 2) return `<span class="muted">Lần đầu trong 30 ngày</span>`;
+    return `${t ? REP_BADGE(t) : n + "×"}
+      <button class="ws-copy" data-rep-hist="1" title="Xem ${E(n)} ticket này ở tab Lịch sử">xem</button>`;
   }
 
   // ---------------- Tab 2: Lịch sử ----------------
@@ -163,7 +217,9 @@
   function historyHtml() {
     const s = P().getTicketSummary(ws.ticketId);
     const f = { ...histFilter };
-    if (histFilter.sameErrorOn && s) f.sameError = (s.err || "").split(" ")[0];
+    // Ưu tiên errCode (sla_monitor bóc sẵn): err chỉ là 60 ký tự đầu của errorDesc và
+    // nhiều ticket EVCS mở đầu bằng ngày giờ, cắt theo dấu cách sẽ ra "2026-08-08".
+    if (histFilter.sameErrorOn && s) f.sameError = s.errCode || (s.err || "").split(" ")[0];
     const h = P().getStationHistory(ws.code, f);
     if (!h.loaded) return `<div class="ws-skel">Đang tải lịch sử từ CCTS…</div>`;
     if (h.error) return `<div class="ws-empty">Lỗi tải lịch sử (mạng/quyền).<br>
@@ -174,7 +230,8 @@
           `<button class="chip${histFilter.days === d ? " on" : ""}" data-days="${d}">${l}</button>`).join("")}
         <button class="chip${histFilter.sameErrorOn ? " on" : ""}" data-same="1">Cùng Error Code</button>
         <button class="chip${histFilter.withParts ? " on" : ""}" data-parts="1">Có thay vật tư</button>
-      </div>`;
+      </div>
+      ${histFilter.sameErrorOn ? `<div class="ws-note-src">Lịch sử lọc theo TRẠM; huy hiệu 🔁 đếm theo SN thiết bị nên hai số có thể lệch khi trạm có nhiều trụ/tủ.</div>` : ""}`;
     // AI_SUMMARY_ON = false thì bỏ hẳn khối tóm tắt (05/08/2026) — xem config.js mục 5.
     const aiOn = (typeof AI_SUMMARY_ON === "undefined") || AI_SUMMARY_ON;
     const ai = (aiOn && h.ai) ? `<div class="ws-ai">✨ <b>Tóm tắt AI</b><br>${E(h.ai)}</div>` : "";
@@ -226,6 +283,11 @@
     document.querySelectorAll("#ws [data-hist-retry]").forEach((b) => b.onclick = () => {
       if (typeof retryStationHistory === "function") retryStationHistory(ws.code);
       $("ws-body").innerHTML = `<div class="ws-skel">Đang tải lịch sử từ CCTS…</div>`;
+    });
+    // "xem" ở ô Lỗi lặp lại -> sang tab Lịch sử, bật sẵn 30 ngày + cùng Error Code
+    document.querySelectorAll("#ws [data-rep-hist]").forEach((b) => b.onclick = () => {
+      histFilter.days = 30; histFilter.sameErrorOn = true;
+      setTab("history");
     });
     document.querySelectorAll("#ws .chip").forEach((c) => c.onclick = () => {
       if (c.dataset.days != null) histFilter.days = +c.dataset.days;

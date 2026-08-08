@@ -112,6 +112,50 @@ chỉ cho lấy GPS trên HTTPS (hoặc localhost).
   cho cả đội; trạm có ghi chú viền cam trên bản đồ. Người tạo hoặc Admin xóa được ghi chú.
 - **Cần rule `/notes`** ở Bước 1 (xem trên) — nếu không sẽ báo `permission_denied` khi lưu.
 
+## Lỗi lặp lại + Log CPO từ VOMS (08/08/2026)
+
+Hai thông tin mới bám theo từng ticket, `sla_monitor` tính/lấy sẵn rồi đẩy kèm vào
+`/tickets/current` — web **không** gọi thêm API nào.
+
+**1. 🔁 Lặp lại SN + mã lỗi trong 30 ngày** (trường `rep`)
+
+- Đếm số ticket **cùng S/N thiết bị** (`chargeBoxId` — chính là SN nằm trong tên ticket CCTS)
+  **và cùng mã lỗi**, tạo trong 30 ngày gần nhất, **mọi trạng thái kể cả đã đóng**, tính cả
+  ticket đang xem. Nguồn: `history_cache.json` mà monitor đã kéo sẵn → **0 request thêm cho CCTS**.
+- Hiện ở: danh sách "Ưu tiên xử lý", popup trạm, và header + ô "Lỗi lặp lại" của workspace.
+  Chỉ hiện khi ≥ 2 lần; màu cam (2) → đỏ (3–4) → đỏ đậm (≥5).
+- Nút **xem** trong workspace nhảy sang tab Lịch sử với sẵn bộ lọc 30 ngày + cùng Error Code.
+  Lưu ý: tab Lịch sử lọc theo **trạm**, huy hiệu đếm theo **SN**, nên trạm nhiều trụ/tủ thì hai
+  số lệch nhau là đúng.
+- `rep = 0` nghĩa là **chưa biết** (ticket vào bằng Import Excel tay không có lịch sử để đếm),
+  không phải "0 lần" → web ẩn huy hiệu.
+
+**2. 🛰️ VOMS: số lần lặp cảnh báo + Log CPO** (`vCase/vRep/vType/vStatus/vLogs`)
+
+- Ghép ticket CCTS với Repair Case bên `voms.vgreen.net` theo **Mã yêu cầu**
+  (CCTS `third_id` == VOMS `caseCode`, dạng `RC-…` / `BS-…`).
+- `vRep` = `cpoRepeatCount` — **"Số lần lặp"** của cảnh báo do CPO đếm. Đây là con số **khác**
+  với `rep` ở trên (`rep` đếm số *ticket*, `vRep` đếm số lần *cảnh báo* lặp).
+- `vLogs` = 5 dòng **Log CPO** gần nhất (thời gian, tên cảnh báo, trạng thái CPO, mã CPO).
+- Hiện ở: một dòng gọn trong popup trạm, và khối "🛰️ VOMS" đầy đủ trong tab Tổng quan.
+  Không ghép được mã yêu cầu → **không hiện khối này** (thay vì hiện số 0).
+
+⚠️ **Chỉ trụ sạc (EVCS) mới có Log CPO và số lần lặp.** Kiểm chứng trên dữ liệu thật 08/08/2026:
+
+| Ticket | Mã yêu cầu | Bên VOMS | Log CPO + số lần lặp |
+|---|---|---|---|
+| EVCS | `RC-…` | `/repair-orders` | **Có** (khi yêu cầu do CPO sinh) |
+| BSS | `BS-…` | `/es/repair-orders` | **Không có** — VOMS không lưu cho tủ đổi pin |
+
+Yêu cầu `RC-` nhưng do **CSKH** tạo cũng không có. Trong hai trường hợp đó ô "Số lần lặp"
+ghi rõ **lý do** ("Tủ đổi pin — VOMS không có Log CPO cho BSS" / "Yêu cầu do CSKH tạo…")
+chứ không hiện số 0.
+- Bật ở phía `sla_monitor`: điền `VOMS_EMAIL` trong `.env` rồi lấy phiên **một lần** —
+  `python voms.py --login` (email + mật khẩu + OTP), hoặc `python voms.py --from-browser`
+  (dán `localStorage['auth-storage']` từ trình duyệt đang đăng nhập; **bắt buộc dùng đường này
+  nếu tài khoản là Microsoft SSO**). Chưa làm bước này thì bản đồ vẫn chạy bình thường,
+  chỉ thiếu phần VOMS.
+
 ## Tự động đồng bộ ticket (đã nối sla_monitor)
 
 Không cần Import Excel tay nữa: `sla_monitor` (thư mục cạnh bên) mỗi chu kỳ quét CCTS

@@ -7,7 +7,8 @@
  *
  * Domain model:
  *   TicketSummary   {id,name,stationCode,cpid,status,rej,slaH,deadline,createMs,
- *                    owner,collab,err,urgency,addr,model,bom,firmware}
+ *                    owner,collab,err,errCode,rep,voms,urgency,addr,model,bom,firmware}
+ *   VomsInfo        {case,rep,ptype,status,logs:[{ts,code,name,st,closed}]}
  *   StationProfile  {code,type,name,addr,pos,noteCount,hasFix}
  *   TicketEvent     {ts,ticketId,actor,kind,content,source}
  *   SparePartRecord {ticketId,stationCode,materialCode,materialName,partType,
@@ -43,6 +44,18 @@
       owner: t.owner || "",
       collab: t.collab || "",
       err: t.err || "",
+      // errCode/rep: sla_monitor đẩy kèm từ 08/08/2026. rep = số ticket cùng SN thiết bị
+      // + cùng mã lỗi trong 30 ngày (tính cả ticket này); 0 = chưa biết, không phải "0 lần".
+      errCode: t.errCode || "",
+      rep: +t.rep || 0,
+      // voms: sla_monitor/voms.py gắn kèm khi khớp được third_id <-> caseCode VOMS.
+      // rep = cpoRepeatCount ("Số lần lặp" của cảnh báo, do CPO đếm — KHÁC với `rep`
+      // ở trên vốn đếm số TICKET cùng SN+mã lỗi trong 30 ngày). null = VOMS không trả.
+      voms: t.vCase ? {
+        case: t.vCase, rep: (t.vRep == null ? null : +t.vRep),
+        ptype: t.vType || "", status: t.vStatus || "", src: t.vSrc || "",
+        logs: t.vLogs || [],
+      } : null,
       urgency: t.urg || "",
       addr: t.addr || "",
       // Model/BOM/FW: KHÔNG suy đoán từ tài liệu — chỉ từ dữ liệu live nếu có.

@@ -77,6 +77,46 @@ function bucketOf(t) {
   const h = (t.deadline - Date.now()) / HOURS;
   return h < 0 ? "over" : h <= 1 ? "b1" : h <= 3 ? "b3" : h <= 8 ? "b8" : h <= 24 ? "b24" : "b99";
 }
+// ---------- lặp lại SN + mã lỗi trong 30 ngày (08/08/2026) ----------
+// sla_monitor đẩy sẵn trường `rep` (fieldmap_push._fill_repeat): số ticket cùng SN
+// thiết bị + cùng mã lỗi tạo trong 30 ngày, TÍNH CẢ ticket này. rep<=1 = không lặp;
+// rep=0/undefined = chưa biết (import Excel tay không có lịch sử để đếm) -> ẩn hẳn.
+const REP_WINDOW_D = 30;
+function repN(t) { return +(t && t.rep) || 0; }
+function repColor(n) { return n >= 5 ? "#7f1d1d" : n >= 3 ? "#dc2626" : "#f97316"; }
+function repTitle(t) {
+  const n = repN(t);
+  return "Lỗi lặp lại: " + n + " ticket cùng SN " + (t.cpid || "?") +
+    (t.errCode ? " + mã " + t.errCode : "") + " trong " + REP_WINDOW_D + " ngày (tính cả ticket này)";
+}
+// huy hiệu nhỏ dùng chung cho danh sách ưu tiên / popup / workspace
+function repBadge(t, style) {
+  const n = repN(t);
+  if (n < 2) return "";
+  return '<span title="' + esc(repTitle(t)) + '" style="background:' + repColor(n) +
+    ";color:#fff;border-radius:8px;padding:1px 5px;font-size:10px;font-weight:700;white-space:nowrap;" +
+    (style || "") + '">🔁 ' + n + "×/" + REP_WINDOW_D + "n</span>";
+}
+
+// ---------- VOMS: số lần lặp cảnh báo + Log CPO (08/08/2026) ----------
+// sla_monitor/voms.py ghép theo Mã yêu cầu (third_id CCTS == caseCode VOMS) rồi đẩy
+// kèm vào hàng: vCase/vRep/vType/vStatus/vLogs. Không có vCase = chưa ghép được.
+// Nhãn "Loại cảnh báo" lấy đúng chữ app VOMS đang dùng (i18n vi của họ).
+// Khai ở đây để workspace.js dùng chung — đừng chép sang file thứ hai.
+const VOMS_PTYPE = {
+  PERSISTENT: "Lỗi tồn", RECURRING: "Lỗi lặp", CONNECTION_LOSS: "Mất kết nối",
+  FULL_STATION_DISCONNECT: "Mất kết nối toàn trạm", FINISHED: "Kết thúc",
+};
+function vomsLine(t) {
+  if (!t || !t.vCase) return "";
+  const bits = [];
+  if (t.vRep != null) bits.push("lặp <b>" + esc(t.vRep) + "</b> lần");
+  if (t.vType) bits.push(esc(VOMS_PTYPE[t.vType] || t.vType));
+  if (t.vLogs && t.vLogs.length) bits.push(t.vLogs.length + " log CPO");
+  return "<br><span style='color:#0369a1'>🛰️ VOMS " + esc(t.vCase) +
+    (bits.length ? " · " + bits.join(" · ") : "") + "</span>";
+}
+
 function remText(t) {
   if (t.noSla) return "không SLA";
   let ms = t.deadline - Date.now();
@@ -528,6 +568,7 @@ function render() {
   $("urgent_list").innerHTML = ug.map((t, i) =>
     '<div class="row" data-i="' + i + '"><span class="dot" style="background:' + BCOLOR[bucketOf(t)] + '"></span>' +
     "<span>" + esc(t.stRaw || t.id) + (isRej(t) ? " <span style='color:#dc2626;font-weight:700;font-size:10px'>⛔ REJECT</span>" : "") +
+    " " + repBadge(t) +
     "<br><span style='color:#64748b;font-size:11px'>" + esc(t.err || t.id) + "</span></span>" +
     '<span class="rem" style="color:' + BCOLOR[bucketOf(t)] + '">' + remText(t) + "</span></div>"
   ).join("") || "<div style='color:#94a3b8;padding:6px 2px'>Chưa có ticket</div>";
@@ -561,9 +602,11 @@ function popupHtml(code, arr) {
       const b = bucketOf(t);
       return '<div class="tk"><span class="pill" style="background:' + BCOLOR[b] + '">' + remText(t) + "</span> <b>" + esc(t.id) + "</b>" + (t.noSla ? " (ngoài API creation)" : " (SLA " + t.limitH + "h)") +
         (isRej(t) ? ' <span class="pill" style="background:#dc2626">⛔ REJECT</span>' : "") +
+        (repN(t) >= 2 ? " " + repBadge(t) : "") +
         "<br>" + esc(t.err || "—") + " · " + esc(t.status) +
         "<br><span style='color:#64748b'>Mã trạm: <b>" + esc(t.stRaw || code) + "</b></span>" +
         (t.cpid ? "<br><span style='color:#64748b'>Trụ/tủ: " + esc(t.cpid) + "</span>" : "") +
+        vomsLine(t) +
         (t.owner ? "<br><span style='color:#64748b'>Owner: " + esc(t.owner) + "</span>" : "") + "</div>";
     }).join("") +
     (near.length ? "<div style='margin-top:6px;border-top:2px solid #e2e8f0;padding-top:5px'><b>Gần nhất:</b> " +
