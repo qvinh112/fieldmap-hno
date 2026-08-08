@@ -202,6 +202,11 @@
         <div class="ws-kv"><span>Số lần lặp (CPO)</span><b>${repTxt}</b></div>
         <div class="ws-kv"><span>Loại cảnh báo</span><b>${E(pt) || "<i class='muted'>—</i>"}</b></div>
         <div class="ws-kv"><span>Trạng thái VOMS</span><b>${E(v.status) || "<i class='muted'>—</i>"}</b></div>
+        <div class="ws-kv"><span>Cảnh báo CPO</span><b>${
+          v.cleared
+            ? (typeof clearBadge === "function" ? clearBadge({ vClear: 1, vClearAt: v.clearedAt }) : "✅ đã dứt")
+            : (v.logs && v.logs.length ? '<span style="color:#dc2626">⚠ còn cảnh báo chưa dứt</span>' : "<i class='muted'>—</i>")
+        }</b></div>
         <div class="ws-psec-h" style="margin-top:8px">Log CPO${logCount(v)}</div>
         ${logs || `<div class="ws-empty">Không có log CPO nào.</div>`}
       </div>`;

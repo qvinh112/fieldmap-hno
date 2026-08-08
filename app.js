@@ -112,9 +112,27 @@ function vomsLine(t) {
   const bits = [];
   if (t.vRep != null) bits.push("lặp <b>" + esc(t.vRep) + "</b> lần");
   if (t.vType) bits.push(esc(VOMS_PTYPE[t.vType] || t.vType));
-  if (t.vLogs && t.vLogs.length) bits.push(t.vLogs.length + " log CPO");
+  if (t.vLogs && t.vLogs.length) bits.push((t.vNLog || t.vLogs.length) + " log CPO");
   return "<br><span style='color:#0369a1'>🛰️ VOMS " + esc(t.vCase) +
-    (bits.length ? " · " + bits.join(" · ") : "") + "</span>";
+    (bits.length ? " · " + bits.join(" · ") : "") + "</span>" +
+    (t.vClear ? "<br>" + clearBadge(t) : "");
+}
+
+// "CPO đã dứt" = mọi cảnh báo trong log gần nhất đều CLOSED (sla_monitor tính sẵn,
+// xem voms._cpo_cleared). Đây là dấu hiệu GỢI Ý ticket có thể đóng được — KHÔNG phải
+// kết luận: nó chỉ nhìn 5 dòng log gần nhất, và không biết hiện trường đã xử lý xong chưa.
+function clearAgo(t) {
+  const d = t.vClearAt ? new Date(t.vClearAt) : null;
+  if (!d || isNaN(d)) return "";
+  const h = (Date.now() - d) / HOURS;
+  return h < 1 ? "vừa dứt" : h < 48 ? "dứt " + Math.round(h) + "h trước" : "dứt " + Math.round(h / 24) + " ngày trước";
+}
+function clearBadge(t) {
+  if (!t || !t.vClear) return "";
+  const ago = clearAgo(t);
+  return '<span title="Mọi cảnh báo CPO của yêu cầu này đã CLOSED — kiểm tra rồi có thể đóng ticket"' +
+    ' style="background:#15803d;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">' +
+    "✅ CPO đã dứt" + (ago ? " · " + esc(ago) : "") + "</span>";
 }
 
 function remText(t) {
@@ -470,7 +488,7 @@ function afterData() {
 }
 
 // ---------- lọc + vẽ ----------
-["f_radius", "f_type", "f_sla", "f_owner", "f_collab", "f_rej"].forEach((id) => $(id).addEventListener("change", () => {
+["f_radius", "f_type", "f_sla", "f_owner", "f_collab", "f_rej", "f_clear"].forEach((id) => $(id).addEventListener("change", () => {
   // chọn bán kính khi chưa có GPS: filter không áp được — báo rõ thay vì im lặng hiện tất cả
   if (id === "f_radius" && $("f_radius").value && !myPos) toast("Chưa lấy được GPS — bộ lọc bán kính chưa áp dụng, kiểm tra quyền vị trí", 5000);
   render();
@@ -499,6 +517,7 @@ function filtered() {
   const typ = $("f_type").value, sla = $("f_sla").value, own = $("f_owner").value, col = $("f_collab").value;
   return tickets.filter((t) => {
     if ($("f_rej").checked && !isRej(t)) return false;
+    if ($("f_clear").checked && !t.vClear) return false;
     if (typ && (t.st ? STATIONS[t.st][2] : "") !== typ) return false;
     if (own && t.owner !== own) return false;
     if (col && !tokens(t.collab).includes(col)) return false;
@@ -568,7 +587,7 @@ function render() {
   $("urgent_list").innerHTML = ug.map((t, i) =>
     '<div class="row" data-i="' + i + '"><span class="dot" style="background:' + BCOLOR[bucketOf(t)] + '"></span>' +
     "<span>" + esc(t.stRaw || t.id) + (isRej(t) ? " <span style='color:#dc2626;font-weight:700;font-size:10px'>⛔ REJECT</span>" : "") +
-    " " + repBadge(t) +
+    " " + repBadge(t) + (t.vClear ? " " + clearBadge(t) : "") +
     "<br><span style='color:#64748b;font-size:11px'>" + esc(t.err || t.id) + "</span></span>" +
     '<span class="rem" style="color:' + BCOLOR[bucketOf(t)] + '">' + remText(t) + "</span></div>"
   ).join("") || "<div style='color:#94a3b8;padding:6px 2px'>Chưa có ticket</div>";

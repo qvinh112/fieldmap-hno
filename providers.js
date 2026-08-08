@@ -56,6 +56,7 @@
         case: t.vCase, rep: (t.vRep == null ? null : +t.vRep),
         ptype: t.vType || "", status: t.vStatus || "", src: t.vSrc || "",
         logs: t.vLogs || [], nlog: +t.vNLog || 0,
+        cleared: !!t.vClear, clearedAt: t.vClearAt || "",
       } : null,
       urgency: t.urg || "",
       addr: t.addr || "",

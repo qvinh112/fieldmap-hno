@@ -202,6 +202,10 @@
       <label style="display:flex;align-items:center;gap:6px;margin-top:9px;cursor:pointer">
         <input type="checkbox" id="f_rej" style="width:16px;height:16px;flex:none" /> Chỉ ticket bị VOMS reject
       </label>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:7px;cursor:pointer"
+             title="Mọi cảnh báo CPO của yêu cầu đã CLOSED bên VOMS — ứng viên đóng ticket">
+        <input type="checkbox" id="f_clear" style="width:16px;height:16px;flex:none" /> ✅ Chỉ ticket CPO đã dứt
+      </label>
       <label>Ticket Owner</label>
       <select id="f_owner"><option value="">Tất cả owner</option></select>
       <label>Collaborator (SE phối hợp)</label>
@@ -259,8 +263,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
 <!-- bump ?v= mỗi lần sửa app.js/config.js để trình duyệt nạp code mới, không dùng bản cache cũ -->
 <script src="config.js?v=20260805a"></script>
-<script src="app.js?v=20260808a"></script>
-<script src="providers.js?v=20260808b"></script>
-<script src="workspace.js?v=20260808b"></script>
+<script src="app.js?v=20260808c"></script>
+<script src="providers.js?v=20260808c"></script>
+<script src="workspace.js?v=20260808c"></script>
 </body>
 </html>
