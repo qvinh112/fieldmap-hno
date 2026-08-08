@@ -8,7 +8,8 @@
  * Domain model:
  *   TicketSummary   {id,name,stationCode,cpid,status,rej,slaH,deadline,createMs,
  *                    owner,collab,err,errCode,rep,voms,urgency,addr,model,bom,firmware}
- *   VomsInfo        {case,rep,ptype,status,logs:[{ts,code,name,st,closed}]}
+ *   VomsInfo        {case,rep,ptype,status,src,nlog,logs:[{ts,name,st,closed,cpoId}]}
+ *                   logs = tối đa 5 dòng MỚI NHẤT (mới trên cùng); nlog = tổng số dòng
  *   StationProfile  {code,type,name,addr,pos,noteCount,hasFix}
  *   TicketEvent     {ts,ticketId,actor,kind,content,source}
  *   SparePartRecord {ticketId,stationCode,materialCode,materialName,partType,
@@ -54,7 +55,7 @@
       voms: t.vCase ? {
         case: t.vCase, rep: (t.vRep == null ? null : +t.vRep),
         ptype: t.vType || "", status: t.vStatus || "", src: t.vSrc || "",
-        logs: t.vLogs || [],
+        logs: t.vLogs || [], nlog: +t.vNLog || 0,
       } : null,
       urgency: t.urg || "",
       addr: t.addr || "",

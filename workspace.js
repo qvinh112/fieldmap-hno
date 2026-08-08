@@ -168,6 +168,13 @@
   // Ghép theo Mã yêu cầu: third_id của CCTS == caseCode của VOMS. Không khớp được
   // (hoặc chưa đăng nhập VOMS) -> KHÔNG hiện khối này, thay vì hiện số 0 gây hiểu nhầm.
   const PTYPE_VI = () => (typeof VOMS_PTYPE !== "undefined" ? VOMS_PTYPE : {});
+  // "(5 gần nhất / 11)" khi VOMS có nhiều hơn số dòng ta giữ — nhìn danh sách bị cắt
+  // mà không có tổng thì tưởng cảnh báo chỉ phát 5 lần.
+  function logCount(v) {
+    const n = (v.logs || []).length;
+    if (!n) return "";
+    return v.nlog > n ? ` (${n} gần nhất / ${v.nlog})` : ` (${n} dòng)`;
+  }
   function vomsHtml(s) {
     const v = s && s.voms;
     if (!v) return "";
@@ -195,7 +202,7 @@
         <div class="ws-kv"><span>Số lần lặp (CPO)</span><b>${repTxt}</b></div>
         <div class="ws-kv"><span>Loại cảnh báo</span><b>${E(pt) || "<i class='muted'>—</i>"}</b></div>
         <div class="ws-kv"><span>Trạng thái VOMS</span><b>${E(v.status) || "<i class='muted'>—</i>"}</b></div>
-        <div class="ws-psec-h" style="margin-top:8px">Log CPO${v.logs && v.logs.length ? " (" + v.logs.length + " dòng gần nhất)" : ""}</div>
+        <div class="ws-psec-h" style="margin-top:8px">Log CPO${logCount(v)}</div>
         ${logs || `<div class="ws-empty">Không có log CPO nào.</div>`}
       </div>`;
   }
