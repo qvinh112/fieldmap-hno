@@ -173,7 +173,9 @@
   function logCount(v) {
     const n = (v.logs || []).length;
     if (!n) return "";
-    return v.nlog > n ? ` (${n} gần nhất / ${v.nlog})` : ` (${n} dòng)`;
+    // Từ 12/08/2026 mỗi ô là MỘT cảnh báo (gộp OPEN+CLOSED), nên số ô ít hơn số dòng —
+    // nói rõ "dòng" kẻo tưởng mất log.
+    return v.nlog > n ? ` (gộp từ ${n} dòng gần nhất / ${v.nlog})` : ` (gộp từ ${n} dòng)`;
   }
   function vomsHtml(s) {
     const v = s && s.voms;
@@ -190,12 +192,46 @@
       : `<b style="color:${v.rep >= 3 ? "#dc2626" : v.rep >= 2 ? "#f97316" : "#0f172a"}">${E(v.rep)} lần</b>`;
     // VOMS trả giờ ISO UTC -> đổi sang giờ máy để KTV khỏi tự trừ 7 tiếng.
     const vt = (s) => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toLocaleString("vi") : (s || "?"); };
-    const logs = (v.logs || []).map((l) => `
+    const dur = (a, b) => {
+      const x = new Date(a), y = new Date(b);
+      if (isNaN(x) || isNaN(y)) return "";
+      const m = Math.round((y - x) / 60000);
+      if (m < 0) return "";                      // CPO dứt trước khi VOMS nạp — có thật, xem dưới
+      return m < 60 ? m + " phút" : m < 1440 ? (m / 60).toFixed(1) + " giờ" : Math.round(m / 1440) + " ngày";
+    };
+    // Gộp log theo cpoId = MỘT lần phát cảnh báo (12/08/2026). VOMS trả OPEN và CLOSED
+    // thành HAI dòng rời; để nguyên thì KTV thấy hai ô không liên quan và không đọc được
+    // cảnh báo tồn bao lâu. cpoId là khóa đúng: đo 47.422 cpoId thì 47.422 cái chỉ thuộc
+    // một yêu cầu duy nhất, không cái nào nằm ở hai case.
+    const groups = [];
+    const byCpo = {};
+    for (const l of v.logs || []) {
+      const k = l.cpoId || ("_" + groups.length);
+      if (!byCpo[k]) { byCpo[k] = { cpoId: l.cpoId, name: l.name, open: "", close: "" }; groups.push(byCpo[k]); }
+      const g = byCpo[k];
+      if (String(l.st || "").toUpperCase() === "CLOSED") g.close = l.closed || l.ts;
+      else if (!g.open || (l.ts && l.ts < g.open)) g.open = l.ts;
+      if (!g.name) g.name = l.name;
+    }
+    groups.sort((a, b) => String(b.open || b.close || "").localeCompare(String(a.open || a.close || "")));
+    const logs = groups.map((g) => {
+      const isMain = v.main && g.cpoId === v.main;
+      // ⚠️ Cảnh báo KHÔNG phải gốc thì VOMS không bao giờ ghi dòng CLOSED — đối soát
+      // 156.178 dòng CPO ngày 12/08/2026: chúng đã dứt hết bên CPO. Nên viết "VOMS
+      // không có tin dứt", KHÔNG viết "chưa dứt" (khác nghĩa hoàn toàn với KTV).
+      const state = g.close
+        ? `<span style="color:#15803d;font-weight:700">đã dứt</span>`
+        : isMain
+          ? `<span style="color:#dc2626;font-weight:700">chưa dứt</span>`
+          : `<span class="muted">VOMS không có tin dứt</span>`;
+      const d = g.close ? dur(g.open, g.close) : "";
+      return `
       <div class="ws-ev">
-        <div class="ws-ev-h"><span>${E(vt(l.ts))}</span><span class="ws-ev-k">${E(l.st || "")}</span></div>
-        <div><b>${E(l.name || "—")}</b>${l.cpoId ? ` <span class="muted">· CPO ${E(l.cpoId)}</span>` : ""}</div>
-        ${l.closed ? `<div class="muted">đóng CPO: ${E(vt(l.closed))}</div>` : ""}
-      </div>`).join("");
+        <div class="ws-ev-h"><span>${E(vt(g.open || g.close))}</span><span class="ws-ev-k">${state}</span></div>
+        <div><b>${E(g.name || "—")}</b>${isMain ? ' <span class="muted">· gốc</span>' : ""}${g.cpoId ? ` <span class="muted">· CPO ${E(g.cpoId)}</span>` : ""}</div>
+        ${g.close ? `<div class="muted">mở ${E(vt(g.open))} → dứt ${E(vt(g.close))}${d ? ` · tồn ${E(d)}` : ""}</div>` : ""}
+      </div>`;
+    }).join("");
     return `
       <div class="ws-card">
         <div class="ws-psec-h">🛰️ VOMS · ${E(v.case)}</div>
@@ -205,7 +241,10 @@
         <div class="ws-kv"><span>Cảnh báo CPO</span><b>${
           v.cleared
             ? (typeof clearBadge === "function" ? clearBadge({ vClear: 1, vClearAt: v.clearedAt }) : "✅ đã dứt")
-            : (v.logs && v.logs.length ? '<span style="color:#dc2626">⚠ còn cảnh báo chưa dứt</span>' : "<i class='muted'>—</i>")
+            : v.after
+              ? (typeof reBadge === "function" ? reBadge({ vAfter: v.after, vClearAt: v.clearedAt })
+                                               : `🔁 dứt rồi phát lại · ${E(v.after)}`)
+              : (v.logs && v.logs.length ? '<span style="color:#dc2626">⚠ cảnh báo gốc chưa dứt</span>' : "<i class='muted'>—</i>")
         }</b></div>
         <div class="ws-psec-h" style="margin-top:8px">Log CPO${logCount(v)}</div>
         ${logs || `<div class="ws-empty">Không có log CPO nào.</div>`}

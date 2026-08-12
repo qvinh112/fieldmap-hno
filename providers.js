@@ -57,6 +57,9 @@
         ptype: t.vType || "", status: t.vStatus || "", src: t.vSrc || "",
         logs: t.vLogs || [], nlog: +t.vNLog || 0,
         cleared: !!t.vClear, clearedAt: t.vClearAt || "",
+        // main = cpoId cảnh báo GỐC (cpoExternalId), after = số cảnh báo phát lại sau
+        // khi gốc dứt. Hàng cache cũ chưa có hai trường này -> "" và 0, web tự chịu được.
+        main: t.vMain || "", after: +t.vAfter || 0,
       } : null,
       urgency: t.urg || "",
       addr: t.addr || "",

@@ -115,12 +115,13 @@ function vomsLine(t) {
   if (t.vLogs && t.vLogs.length) bits.push((t.vNLog || t.vLogs.length) + " log CPO");
   return "<br><span style='color:#0369a1'>🛰️ VOMS " + esc(t.vCase) +
     (bits.length ? " · " + bits.join(" · ") : "") + "</span>" +
-    (t.vClear ? "<br>" + clearBadge(t) : "");
+    (t.vClear ? "<br>" + clearBadge(t) : t.vAfter ? "<br>" + reBadge(t) : "");
 }
 
-// "CPO đã dứt" = mọi cảnh báo trong log gần nhất đều CLOSED (sla_monitor tính sẵn,
-// xem voms._cpo_cleared). Đây là dấu hiệu GỢI Ý ticket có thể đóng được — KHÔNG phải
-// kết luận: nó chỉ nhìn 5 dòng log gần nhất, và không biết hiện trường đã xử lý xong chưa.
+// "CPO đã dứt" = cảnh báo GỐC của yêu cầu đã CLOSED và không có cảnh báo nào phát lại
+// sau đó (sla_monitor tính sẵn trên TOÀN BỘ log, xem voms._cpo_cleared — luật 12/08/2026).
+// Vẫn là dấu hiệu GỢI Ý ticket có thể đóng, KHÔNG phải kết luận: VOMS không có tin dứt
+// của cảnh báo phụ, và nó không biết hiện trường đã xử lý xong chưa.
 function clearAgo(t) {
   const d = t.vClearAt ? new Date(t.vClearAt) : null;
   if (!d || isNaN(d)) return "";
@@ -130,9 +131,22 @@ function clearAgo(t) {
 function clearBadge(t) {
   if (!t || !t.vClear) return "";
   const ago = clearAgo(t);
-  return '<span title="Mọi cảnh báo CPO của yêu cầu này đã CLOSED — kiểm tra rồi có thể đóng ticket"' +
+  return '<span title="Cảnh báo gốc đã CLOSED và không có cảnh báo nào phát lại sau đó — kiểm tra rồi có thể đóng ticket"' +
     ' style="background:#15803d;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">' +
     "✅ CPO đã dứt" + (ago ? " · " + esc(ago) : "") + "</span>";
+}
+
+// Trạng thái GIỮA (12/08/2026): cảnh báo gốc đã dứt nhưng trụ kêu lại sau đó. Trước đây
+// gộp chung vào "còn cảnh báo chưa dứt" nên KTV không phân biệt được "chưa bao giờ dứt"
+// (894 case) với "dứt rồi phát lại" (6.231 case) — hai việc phải xử lý khác hẳn nhau.
+function reBadge(t) {
+  if (!t || !t.vAfter) return "";
+  const ago = clearAgo(t);
+  return '<span title="Cảnh báo gốc đã dứt' + (ago ? " (" + ago + ")" : "") +
+    ' nhưng sau đó trụ phát thêm ' + t.vAfter + ' cảnh báo nữa. VOMS không ghi tin dứt cho' +
+    ' cảnh báo phát lại, nên không kết luận được chúng còn sống hay không."' +
+    ' style="background:#b45309;color:#fff;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700;white-space:nowrap">' +
+    "🔁 dứt rồi phát lại · " + esc(t.vAfter) + "</span>";
 }
 
 function remText(t) {
@@ -587,7 +601,7 @@ function render() {
   $("urgent_list").innerHTML = ug.map((t, i) =>
     '<div class="row" data-i="' + i + '"><span class="dot" style="background:' + BCOLOR[bucketOf(t)] + '"></span>' +
     "<span>" + esc(t.stRaw || t.id) + (isRej(t) ? " <span style='color:#dc2626;font-weight:700;font-size:10px'>⛔ REJECT</span>" : "") +
-    " " + repBadge(t) + (t.vClear ? " " + clearBadge(t) : "") +
+    " " + repBadge(t) + (t.vClear ? " " + clearBadge(t) : t.vAfter ? " " + reBadge(t) : "") +
     "<br><span style='color:#64748b;font-size:11px'>" + esc(t.err || t.id) + "</span></span>" +
     '<span class="rem" style="color:' + BCOLOR[bucketOf(t)] + '">' + remText(t) + "</span></div>"
   ).join("") || "<div style='color:#94a3b8;padding:6px 2px'>Chưa có ticket</div>";
